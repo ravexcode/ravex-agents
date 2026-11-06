@@ -1,118 +1,125 @@
 # Ravex Agents
 
-This is a personal agents orquestator, you can use it for testing or for personal use
+Un equipo de agentes con un orquestador, exclusivo de la terminal. Creas agentes eligiendo el proveedor y el modelo de cada uno, le das un objetivo al orquestador, este propone un plan y, cuando lo apruebas, el equipo trabaja en un tablero compartido y una sala de grupo.
 
-## Requirements
+Usa tus CLIs ya instaladas y autenticadas: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/cli) y [OpenCode](https://opencode.ai). No necesitas tenerlas todas; un agente de una CLI que falte aparece como no instalado y no recibe tareas.
 
-- [Bun](https://bun.sh) 1.3.14 or later
-- At least one of these CLIs, installed and signed in: [Claude Code](https://claude.com/claude-code), [Codex](https://github.com/openai/codex) or [OpenCode](https://opencode.ai)
+## Requisitos
 
-Ravex Agents runs these CLIs with your existing sign-ins, so it needs no API keys of its own. A CLI that isn't installed is marked in its pane and the others keep working.
+- [Bun](https://bun.sh) 1.3 o superior
+- Al menos una de las CLIs anteriores en tu `PATH`
+- Codex necesita que la carpeta sea un repositorio de Git
 
-## Getting started
-
-Start the app from the project you want the agents to work on:
+## Empezar
 
 ```sh
 bun install
-bun run start
+bun run dev
 ```
 
-The tree on the left lists your agents, and the right side shows the selected agent's conversation. Selecting `All` sends the prompt to every top-level agent and shows them in columns, which uses quota on each of them.
+Para un ejecutable independiente (Linux x64 con glibc):
 
-Conversations last until you quit the app.
+```sh
+bun run build
+./dist/ravex-agents
+```
 
-To run it without Bun, compile the executable with `bun run build` and run `dist/ravex-agents` from your project. It includes Bun and OpenTUI, but it still needs the agent CLIs installed.
+Trabaja sobre la carpeta desde la que lo abras.
 
-## Keys
+## Cómo funciona
 
-| Key | Action |
-| --- | --- |
-| `Enter` | Send the prompt to the selected agent |
-| `Tab` / `Shift+Tab` | Select the next or previous agent |
-| `Esc` | Cancel the selected agent's work, including its subagents |
-| `Ctrl+N` | Create an agent |
-| `Ctrl+O` | Edit the selected agent |
-| `Ctrl+X` | Delete the selected agent, after confirming |
-| `Ctrl+E` | Switch the session between read-only and edit mode |
-| `Ctrl+C` | Stop all agents and quit |
+1. Escribes un objetivo en la conversación del orquestador.
+2. El orquestador puede leer el proyecto, pero solo planifica. Recibe la lista del equipo y propone tareas.
+3. **Nada se ejecuta hasta que apruebas.** Puedes aprobar, escribir cambios para que replanifique, descartar el plan o reasignar tareas.
+4. Las tareas arrancan cuando sus dependencias terminan, y reciben sus resultados y comentarios.
+5. Si algo falla o se bloquea, sus dependientes esperan y el orquestador propone qué hacer. Ese plan también requiere tu aprobación.
+6. Al terminar todo, el orquestador te da un resumen.
 
-In the agent form, `Tab` moves between fields, `←`/`→` change a choice, `↑`/`↓` and `Space` choose subagents, `Ctrl+S` saves and `Esc` cancels.
+Reglas del tablero:
 
-In `bun run dev`, `Ctrl+C` closes the app and the file watcher keeps running, so press it again to stop the watcher.
+| Regla | Límite |
+|---|---|
+| Agentes trabajando a la vez | 4 |
+| Tareas por agente a la vez | 1 |
+| Tareas que editan a la vez | 1, porque todos comparten la carpeta |
+| Tareas por objetivo | 12 |
+| Replanificaciones por objetivo | 3 |
+| Rondas de cambios por revisión | 2 |
 
-## Agents
+## Teclas
 
-An agent has a name, a description, a provider, an optional model, instructions, a maximum permission mode and a list of subagents. Press `Ctrl+N` and start from a blank form or a template: Cybersecurity, Design, Code reviewer, Tester or Researcher.
+| Tecla | Acción |
+|---|---|
+| `Tab` / `Shift+Tab` | Cambia de conversación: orquestador, sala o un agente |
+| `Enter` con el input vacío | Aprueba el plan propuesto, o continúa el trabajo en pausa |
+| `Esc` | Cancela lo que corresponda a la vista. Sobre un plan, lo descarta. En pausa, dos veces cierra el objetivo |
+| `Ctrl+T` | Panel de tareas: `↑`/`↓` mueve, `Enter` abre el detalle, `r` reasigna |
+| `Ctrl+G` | Equipo: `n` nuevo, `e` editar, `d` borrar, `o` elegir orquestador |
+| `Ctrl+E` | Cambia la sesión entre solo lectura y edición |
+| `Ctrl+C` | Detiene todo y sale |
 
-Claude, Codex and OpenCode are always available as built-in agents with no instructions. They can't be edited or deleted.
+## Equipo
 
-Agents are saved to one of two files, which you choose in the form:
+Hay un agente `Lead`, que es el orquestador por defecto, y uno por cada proveedor. Todos se pueden editar: se guarda una copia que los sobrescribe, y borrarla restaura el original.
 
-| Save to | File | Marked in the tree |
-| --- | --- | --- |
-| Global | `$XDG_CONFIG_HOME/ravex-agents/agents.json`, by default under `~/.config` | No |
-| Project | `.ravex/agents.json` in the folder where you started the app | `·p` |
+El selector de modelos filtra mientras escribes y admite un nombre que no aparezca en la lista.
 
-A project agent replaces a global agent with the same ID. If a file is invalid, the app reports it, doesn't load its agents and refuses to save to it, so your file isn't overwritten.
+| CLI | De dónde salen los modelos |
+|---|---|
+| Claude | No tiene comando para listarlos, así que ofrece los alias `fable`, `opus`, `sonnet` y `haiku` |
+| Codex | `codex debug models`, solo los que marca como seleccionables |
+| OpenCode | `opencode models` |
 
-Changing an agent's provider, model, instructions or subagents starts a new conversation with it.
+Los agentes se guardan en dos sitios, y los del proyecto ganan si coincide el ID. Un `agents.json` anterior sigue funcionando, y su campo `subagents` se ignora.
 
-### Instructions by provider
+| Dónde | Archivo |
+|---|---|
+| Global | `$XDG_CONFIG_HOME/ravex-agents/agents.json` (por defecto `~/.config`) |
+| Proyecto | `.ravex/agents.json` |
 
-| Provider | How instructions are applied |
-| --- | --- |
-| Claude | Added to its system prompt with `--append-system-prompt` |
-| Codex | Set as `developer_instructions` |
-| OpenCode | Set as the agent's `prompt`, which OpenCode documents as a custom system prompt |
+## Cowork
 
-## Subagents
+**Tablero.** Un agente termina su tarea con un bloque `ravex-task` para informar de que está hecha, bloqueada o lista para revisar, además de poder dejar un comentario. Si no lo incluye, su mensaje final cuenta como resultado. Si la tarea tiene revisor, este aprueba o pide cambios, y una revisión sin veredicto nunca cuenta como aprobada. En el detalle de cada tarea puedes leer comentarios, resultado y conversación, y añadir tus propios comentarios.
 
-Assign subagents to an agent in its form, and they appear nested under it in the tree. An agent can only delegate to the subagents assigned to it, so an agent with none never delegates. You can also select a subagent and message it directly.
+**Sala.** Es una conversación compartida con el equipo, donde también aparecen los eventos del tablero. Un agente solo responde si lo mencionas con `@id`, para no gastar la cuota de todos por cada mensaje. Los agentes pueden mencionarse entre sí, con un límite de 6 respuestas encadenadas por mensaje. Los turnos de sala siempre son de solo lectura: los cambios en archivos pasan por tareas.
 
-Subagents can use a different provider from their parent. When an agent delegates:
+Estas CLIs funcionan por turnos, así que los agentes se comunican entre turnos: no se interrumpen ni conversan a mitad de una ejecución.
 
-1. It ends its message with a `ravex-delegate` block that lists the tasks.
-2. Each subagent starts a clean session that contains only its task. Delegated tasks don't share its direct conversation.
-3. Once all of them finish, the parent resumes with each subagent's final message, including any failures.
-4. The parent can delegate again or give its final answer.
+## Permisos
 
-An agent runs one turn at a time, so tasks for a busy agent wait in a queue. Each subagent is a separate CLI run that uses quota of its own.
+La sesión arranca siempre en solo lectura, y aprobar un plan no da permisos. El modo real de cada turno es el más bajo de los que apliquen:
 
-| Limit | Value |
-| --- | --- |
-| Steps in a delegation chain | 3 |
-| Delegation rounds per prompt | 5 |
-| Tasks per round | 8 |
-| Subagents running at once, per round | 4 |
-| Characters in each result returned to the parent | 20,000 |
+| Turno | Modo |
+|---|---|
+| Orquestador, revisor o sala | Siempre solo lectura |
+| Tarea sin `edits` | Siempre solo lectura |
+| Tarea con `edits` | El más bajo entre `Ctrl+E` y el máximo del agente |
+| Chat directo con un agente | Igual, y solo lectura si otro agente está editando |
 
-Pressing `Esc` on a parent stops its whole chain. Pressing it on a subagent stops only that subagent, and the parent receives `cancelled` as its result.
+Cómo se aplica en cada CLI:
 
-## Permission modes
+| CLI | Solo lectura | Edición |
+|---|---|---|
+| Claude | `--permission-mode dontAsk` | `--permission-mode acceptEdits` |
+| Codex | `sandbox_mode="read-only"` | `sandbox_mode="workspace-write"` |
+| OpenCode | Agente propio limitado a leer y buscar, sin acceso a `.env` | Agente `build` |
 
-The app starts in read-only mode. An agent's effective mode is the lowest of the session's mode, its own maximum and its parent's effective mode, so a subagent never has more access than the agent that called it. New agents default to a read-only maximum.
+`dontAsk` y `acceptEdits` aún pueden hacer lo que permitan tus propias reglas de Claude Code. Revísalas si usas reglas amplias.
 
-The mode applies from the next turn, and never bypasses a CLI's approvals.
+## Estado
 
-| Provider | Read-only | Edit |
-| --- | --- | --- |
-| Claude | `--permission-mode dontAsk`: denies anything your Claude settings don't already allow | `--permission-mode acceptEdits`: allows file edits |
-| Codex | `read-only` sandbox | `workspace-write` sandbox |
-| OpenCode | An allowlist agent with only read, search and list tools, which also denies `.env` files | The built-in `build` agent, which **allows the shell by default** |
-
-Edit mode isn't equally strict across providers. OpenCode can run shell commands unless your OpenCode config restricts them.
+El tablero, la sala y las sesiones se guardan en `$XDG_STATE_HOME/ravex-agents/<proyecto>/` (por defecto `~/.local/state`), sin añadir nada a tu repositorio. Al reabrir, las tareas que estaban en marcha vuelven a pendientes marcadas como interrumpidas y no se relanzan solas: `Enter` las continúa. El modo de la sesión no se guarda, así que vuelve a solo lectura.
 
 ## Scripts
 
-| Command | Description |
-| --- | --- |
-| `bun run dev` | Run the app and restart it when files change |
-| `bun run start` | Run the app |
-| `bun test` | Run the tests |
-| `bun run typecheck` | Type-check the project |
-| `bun run build` | Compile a standalone executable for Linux with glibc to `dist/ravex-agents` |
+| Script | Acción |
+|---|---|
+| `bun run dev` | Ejecuta con recarga automática |
+| `bun run start` | Ejecuta sin recarga |
+| `bun run build` | Compila `dist/ravex-agents` |
+| `bun run typecheck` | Comprueba los tipos |
+| `bun test` | Ejecuta los tests |
 
-## Adding a provider
+## Añadir un proveedor
 
-Add an adapter in `src/providers/` that implements `Provider` from `types.ts`, then register it in `index.ts`. An adapter defines how to invoke the CLI and how to translate its JSONL output into provider events. You also need to add its ID to `ProviderId`.
+Crea un adaptador en `src/providers/` que implemente `Provider`, y añádelo a `src/providers/index.ts` y a `ProviderId`. El runner, el equipo y la UI lo tomarán desde ahí.
