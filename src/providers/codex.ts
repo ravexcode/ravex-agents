@@ -32,7 +32,7 @@ export const codex: Provider = {
   label: "Codex",
   binary: "codex",
 
-  buildArgs({ prompt, mode, sessionId }) {
+  buildArgs({ prompt, mode, sessionId, model, instructions }) {
     // `codex exec resume` has no --sandbox flag, so both paths set it as config.
     const sandbox = mode === "edit" ? "workspace-write" : "read-only"
     return [
@@ -41,6 +41,9 @@ export const codex: Provider = {
       "--json",
       "-c",
       `sandbox_mode="${sandbox}"`,
+      ...(model ? ["-m", model] : []),
+      // Config values are parsed as TOML, whose strings accept JSON's escapes.
+      ...(instructions ? ["-c", `developer_instructions=${JSON.stringify(instructions)}`] : []),
       ...(sessionId ? [sessionId] : []),
       "--",
       prompt,

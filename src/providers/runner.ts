@@ -57,7 +57,7 @@ export const runTurn: RunTurn = async (provider, request, onEvent, signal) => {
   try {
     proc = Bun.spawn([provider.binary, ...provider.buildArgs(request)], {
       cwd: request.cwd,
-      env: { ...process.env, ...provider.env },
+      env: { ...process.env, ...provider.buildEnv?.(request) },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

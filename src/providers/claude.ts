@@ -6,7 +6,7 @@ export const claude: Provider = {
   label: "Claude",
   binary: "claude",
 
-  buildArgs({ prompt, mode, sessionId }) {
+  buildArgs({ prompt, mode, sessionId, model, instructions }) {
     return [
       "-p",
       "--output-format",
@@ -15,6 +15,8 @@ export const claude: Provider = {
       "--include-partial-messages",
       "--permission-mode",
       mode === "edit" ? "acceptEdits" : "dontAsk",
+      ...(model ? ["--model", model] : []),
+      ...(instructions ? ["--append-system-prompt", instructions] : []),
       ...(sessionId ? ["--resume", sessionId] : []),
       "--",
       prompt,

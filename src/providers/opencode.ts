@@ -1,33 +1,44 @@
 import { parseJsonObject, summarizeInput } from "./parse.ts"
-import type { Provider } from "./types.ts"
+import type { PermissionMode, Provider } from "./types.ts"
 
 const READ_ONLY_AGENT = "ravex-read-only"
+const EDIT_AGENT = "build"
 
-// The built-in plan agent denies edits but still allows the shell, so it only
-// stays read-only if the model chooses to. This allowlist withholds the tools.
-const CONFIG = {
-  agent: {
-    [READ_ONLY_AGENT]: {
-      mode: "primary",
-      description: "Read-only agent used by Ravex Agents",
-      permission: {
-        "*": "deny",
-        read: { "*": "allow", "*.env": "deny", "*.env.*": "deny" },
-        glob: "allow",
-        grep: "allow",
-        list: "allow",
-      },
-    },
-  },
+function agentFor(mode: PermissionMode): string {
+  return mode === "read-only" ? READ_ONLY_AGENT : EDIT_AGENT
 }
 
 export const opencode: Provider = {
   id: "opencode",
   label: "OpenCode",
   binary: "opencode",
-  env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(CONFIG) },
 
-  buildArgs({ prompt, mode, sessionId }) {
+  buildEnv({ mode, instructions }) {
+    const prompt = instructions ? { prompt: instructions } : {}
+    return {
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        agent: {
+          // The built-in plan agent denies edits but still allows the shell, so it
+          // only stays read-only if the model chooses to. This allowlist withholds the tools.
+          [READ_ONLY_AGENT]: {
+            mode: "primary",
+            description: "Read-only agent used by Ravex Agents",
+            permission: {
+              "*": "deny",
+              read: { "*": "allow", "*.env": "deny", "*.env.*": "deny" },
+              glob: "allow",
+              grep: "allow",
+              list: "allow",
+            },
+            ...(mode === "read-only" ? prompt : {}),
+          },
+          ...(mode === "edit" ? { [EDIT_AGENT]: prompt } : {}),
+        },
+      }),
+    }
+  },
+
+  buildArgs({ prompt, mode, sessionId, model }) {
     return [
       "run",
       // By default the work runs in a shared background service, which keeps
@@ -38,7 +49,8 @@ export const opencode: Provider = {
       "json",
       // Always explicit because a resumed session otherwise keeps its last agent.
       "--agent",
-      mode === "read-only" ? READ_ONLY_AGENT : "build",
+      agentFor(mode),
+      ...(model ? ["-m", model] : []),
       ...(sessionId ? ["--session", sessionId] : []),
       "--",
       prompt,

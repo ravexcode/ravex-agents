@@ -11,6 +11,9 @@ export interface TurnRequest {
   cwd: string
   mode: PermissionMode
   sessionId?: string
+  /** The CLI's default model when omitted. */
+  model?: string
+  instructions?: string
 }
 
 export type ProviderEvent =
@@ -25,7 +28,7 @@ export interface Provider {
   id: ProviderId
   label: string
   binary: string
-  env?: Record<string, string>
   buildArgs(request: TurnRequest): string[]
+  buildEnv?(request: TurnRequest): Record<string, string>
   parseLine(line: string): ProviderEvent[]
 }

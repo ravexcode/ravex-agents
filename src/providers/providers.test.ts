@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { claude } from "./claude.ts"
 import { codex } from "./codex.ts"
 import { opencode } from "./opencode.ts"
+import type { TurnRequest } from "./types.ts"
 
 const line = (value: unknown) => JSON.stringify(value)
 
@@ -41,7 +42,10 @@ describe("buildArgs", () => {
 })
 
 describe("opencode read-only agent", () => {
-  const agent = JSON.parse(opencode.env?.OPENCODE_CONFIG_CONTENT ?? "{}").agent["ravex-read-only"]
+  const env = (request: Partial<TurnRequest> = {}) =>
+    opencode.buildEnv?.({ prompt: "hi", cwd: "/project", mode: "read-only", ...request })
+  const config = (request?: Partial<TurnRequest>) => JSON.parse(env(request)?.OPENCODE_CONFIG_CONTENT ?? "{}")
+  const agent = config().agent["ravex-read-only"]
 
   test("denies everything that isn't explicitly allowed", () => {
     expect(agent.permission["*"]).toBe("deny")
@@ -53,8 +57,50 @@ describe("opencode read-only agent", () => {
     expect(agent.permission.read["*.env.*"]).toBe("deny")
   })
 
+  test("applies instructions to the agent for the current mode, and keeps its permissions", () => {
+    const readOnly = config({ instructions: "Be brief" }).agent["ravex-read-only"]
+    expect(readOnly.prompt).toBe("Be brief")
+    expect(readOnly.permission["*"]).toBe("deny")
+
+    const edit = config({ instructions: "Be brief", mode: "edit" }).agent
+    expect(edit.build.prompt).toBe("Be brief")
+    expect(edit["ravex-read-only"].prompt).toBeUndefined()
+  })
+
+  test("leaves the agent's own prompt alone without instructions", () => {
+    expect(config().agent["ravex-read-only"].prompt).toBeUndefined()
+    expect(config({ mode: "edit" }).agent.build.prompt).toBeUndefined()
+  })
+
   test("runs on a private server so that cancelling stops the work", () => {
     expect(opencode.buildArgs({ prompt: "hi", cwd: "/project", mode: "edit" })).toContain("--standalone")
+  })
+})
+
+describe("agent settings", () => {
+  const request = { prompt: "hi", cwd: "/project", mode: "read-only" as const, model: "m1", instructions: 'Say "x"\nnow' }
+
+  test("pass the model to every CLI", () => {
+    expect(claude.buildArgs(request).join(" ")).toContain("--model m1")
+    expect(codex.buildArgs(request).join(" ")).toContain("-m m1")
+    expect(opencode.buildArgs(request).join(" ")).toContain("-m m1")
+  })
+
+  test("pass instructions with their quotes and newlines intact", () => {
+    const claudeArgs = claude.buildArgs(request)
+    expect(claudeArgs[claudeArgs.indexOf("--append-system-prompt") + 1]).toBe(request.instructions)
+    expect(codex.buildArgs(request)).toContain('developer_instructions="Say \\"x\\"\\nnow"')
+  })
+
+  test("add nothing when unset", () => {
+    const plain = { prompt: "hi", cwd: "/project", mode: "read-only" as const }
+    expect(claude.buildArgs(plain).join(" ")).not.toMatch(/--model|--append-system-prompt/)
+    expect(codex.buildArgs(plain).join(" ")).not.toMatch(/ -m |developer_instructions/)
+    expect(opencode.buildArgs(plain)).not.toContain("-m")
+  })
+
+  test("still end with the prompt on a resumed Codex session", () => {
+    expect(codex.buildArgs({ ...request, sessionId: "abc" }).slice(-3)).toEqual(["abc", "--", "hi"])
   })
 })
 

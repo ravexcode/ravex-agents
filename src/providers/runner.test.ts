@@ -64,7 +64,7 @@ test("fails on a fatal event even when the CLI exits with 0", async () => {
 test("passes the provider's environment to the process", async () => {
   const { events } = await run({
     ...scriptProvider(`console.log(process.env.RAVEX_TEST_VALUE)`),
-    env: { RAVEX_TEST_VALUE: "from-provider" },
+    buildEnv: () => ({ RAVEX_TEST_VALUE: "from-provider" }),
   })
   expect(events).toEqual([{ type: "text-delta", text: "from-provider" }])
 })
