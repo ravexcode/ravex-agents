@@ -1,3 +1,4 @@
+import { parseCodexModels, readCommand } from "./models.ts"
 import { parseJsonObject, truncateDetail } from "./parse.ts"
 import type { Provider, ProviderEvent } from "./types.ts"
 
@@ -31,6 +32,8 @@ export const codex: Provider = {
   id: "codex",
   label: "Codex",
   binary: "codex",
+
+  listModels: async () => parseCodexModels(await readCommand(["codex", "debug", "models"])),
 
   buildArgs({ prompt, mode, sessionId, model, instructions }) {
     // `codex exec resume` has no --sandbox flag, so both paths set it as config.

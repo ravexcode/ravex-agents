@@ -6,6 +6,9 @@ export const claude: Provider = {
   label: "Claude",
   binary: "claude",
 
+  // The CLI has no command that lists models, but these aliases follow the latest of each.
+  listModels: async () => ["fable", "opus", "sonnet", "haiku"],
+
   buildArgs({ prompt, mode, sessionId, model, instructions }) {
     return [
       "-p",

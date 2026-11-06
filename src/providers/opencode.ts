@@ -1,3 +1,4 @@
+import { parseOpenCodeModels, readCommand } from "./models.ts"
 import { parseJsonObject, summarizeInput } from "./parse.ts"
 import type { PermissionMode, Provider } from "./types.ts"
 
@@ -12,6 +13,8 @@ export const opencode: Provider = {
   id: "opencode",
   label: "OpenCode",
   binary: "opencode",
+
+  listModels: async () => parseOpenCodeModels(await readCommand(["opencode", "models"])),
 
   buildEnv({ mode, instructions }) {
     const prompt = instructions ? { prompt: instructions } : {}

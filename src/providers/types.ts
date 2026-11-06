@@ -30,5 +30,7 @@ export interface Provider {
   binary: string
   buildArgs(request: TurnRequest): string[]
   buildEnv?(request: TurnRequest): Record<string, string>
+  /** The models this CLI offers. Rejects if they can't be read. */
+  listModels?(): Promise<string[]>
   parseLine(line: string): ProviderEvent[]
 }
