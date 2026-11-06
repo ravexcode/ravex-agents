@@ -3,6 +3,7 @@ import type { Agent } from "../agents/types.ts"
 import type { RunTurn } from "../providers/runner.ts"
 import type { PermissionMode, Provider } from "../providers/types.ts"
 import { AgentPool, type Entry, type Pane } from "./agent-pool.ts"
+import type { ArchivedConversation, ConversationArchive } from "./archive.ts"
 import { parseBlock, truncateResult } from "./blocks.ts"
 import {
   buildIssuePrompt,
@@ -61,12 +62,16 @@ export interface TeamState {
   saveError?: string
 }
 
+const UNTITLED = "Untitled conversation"
+
 export interface TeamOptions {
   cwd?: string
   run?: RunTurn
   isAvailable?: (provider: Provider) => boolean
   persistence?: StatePersistence
   snapshot?: TeamSnapshot
+  /** Where /new and /resume keep conversations. Without it, /new forgets them. */
+  archive?: ConversationArchive
   /** Turns skill names into instructions. Agents get no skills without it. */
   resolveSkills?: (names: string[]) => SkillInstructions
 }
@@ -105,6 +110,7 @@ interface PlanTurn {
 export class Team {
   readonly #pool: AgentPool
   readonly #persistence?: StatePersistence
+  readonly #archive?: ConversationArchive
   readonly #resolveSkills?: (names: string[]) => SkillInstructions
   readonly #listeners = new Set<() => void>()
   readonly #active = new Map<number, string>()
@@ -121,6 +127,7 @@ export class Team {
 
   constructor(providers: Provider[], agents: Agent[], orchestratorId: string, options: TeamOptions = {}) {
     this.#persistence = options.persistence
+    this.#archive = options.archive
     this.#resolveSkills = options.resolveSkills
     const { snapshot } = options
     this.#state = {
@@ -718,6 +725,74 @@ export class Team {
     this.#setState({ room: [...this.#state.room, { id: this.#nextRoomId++, ...message }] })
   }
 
+  // Conversations
+
+  /** Whether anything is running, which would keep going against the wrong conversation. */
+  isWorking(): boolean {
+    const { board, panes, roomBusy } = this.#state
+    return (
+      board.phase === "planning" ||
+      board.phase === "running" ||
+      board.phase === "wrapping-up" ||
+      roomBusy !== undefined ||
+      panes.some((pane) => this.#pool.isBusy(pane.id))
+    )
+  }
+
+  listConversations(): ArchivedConversation[] {
+    return this.#archive?.list() ?? []
+  }
+
+  /** Returns a notice if it can't start one. The current conversation can be resumed later. */
+  startConversation(): string | undefined {
+    return this.#switchConversation()
+  }
+
+  /** Returns a notice if it can't be resumed. The current conversation can be resumed later. */
+  resumeConversation(id: string): string | undefined {
+    const snapshot = this.#archive?.load(id)
+    if (!snapshot) return "That conversation can't be read anymore."
+    const notice = this.#switchConversation(snapshot)
+    if (!notice) this.#archive?.remove(id)
+    return notice
+  }
+
+  #switchConversation(next?: TeamSnapshot): string | undefined {
+    if (this.isWorking()) return "Agents are working. Press Esc to cancel them first."
+    if (this.#hasConversation()) {
+      try {
+        this.#archive?.save(this.#title(), this.#snapshot())
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        return `Couldn't set this conversation aside, so it's still open: ${reason}`
+      }
+    }
+
+    const room = next?.room ?? []
+    this.#nextRoomId = Math.max(0, ...room.map((message) => message.id)) + 1
+    this.#userStopped = false
+    this.#setState({ board: next ? recoverBoard(next.board) : EMPTY_BOARD, room })
+    this.#pool.restore(next?.sessions ?? {}, next?.entries ?? {})
+    this.flush()
+    return undefined
+  }
+
+  /** Notes such as "Agent changed" aren't worth keeping on their own. */
+  #hasConversation(): boolean {
+    const { board, panes, room } = this.#state
+    return board.tasks.length > 0 || room.length > 0 || panes.some((pane) => pane.entries.some((entry) => entry.kind === "user"))
+  }
+
+  /** What the user first said, which is what they'll recognize it by. */
+  #title(): string {
+    const { board, panes, room } = this.#state
+    const first = panes
+      .flatMap((pane) => pane.entries)
+      .filter((entry) => entry.kind === "user" && !entry.room && entry.taskId === undefined)
+      .sort((a, b) => a.id - b.id)[0]
+    return first?.text ?? board.goal ?? room.find((message) => message.kind === "user")?.text ?? UNTITLED
+  }
+
   // Shutdown
 
   /** Stops everything for good. Running tasks are saved as running, then recover as interrupted. */
@@ -735,22 +810,26 @@ export class Team {
     this.#persistTimer = undefined
     if (!this.#persistence) return
 
-    const entries: Record<string, Entry[]> = {}
-    for (const pane of this.#state.panes) {
-      if (pane.entries.length > 0) entries[pane.id] = pane.entries.slice(-MAX_SAVED_ENTRIES)
-    }
     try {
-      this.#persistence.save({
-        version: 1,
-        board: this.#state.board,
-        room: this.#state.room.slice(-MAX_SAVED_ROOM_MESSAGES),
-        sessions: this.#pool.exportSessions(),
-        entries,
-      })
+      this.#persistence.save(this.#snapshot())
       if (this.#state.saveError) this.#setState({ saveError: undefined })
     } catch (error) {
       const saveError = error instanceof Error ? error.message : String(error)
       if (this.#state.saveError !== saveError) this.#state = { ...this.#state, saveError }
+    }
+  }
+
+  #snapshot(): TeamSnapshot {
+    const entries: Record<string, Entry[]> = {}
+    for (const pane of this.#state.panes) {
+      if (pane.entries.length > 0) entries[pane.id] = pane.entries.slice(-MAX_SAVED_ENTRIES)
+    }
+    return {
+      version: 1,
+      board: this.#state.board,
+      room: this.#state.room.slice(-MAX_SAVED_ROOM_MESSAGES),
+      sessions: this.#pool.exportSessions(),
+      entries,
     }
   }
 

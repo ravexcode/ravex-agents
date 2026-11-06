@@ -3,7 +3,8 @@ import { createRoot } from "@opentui/react"
 import { defaultSkillDirs, SkillLibrary } from "./agents/skills.ts"
 import { AgentStore, defaultAgentPaths } from "./agents/store.ts"
 import { App } from "./app.tsx"
-import { defaultStatePath, StateFile } from "./core/persistence.ts"
+import { ConversationArchive } from "./core/archive.ts"
+import { defaultArchiveDir, defaultStatePath, StateFile } from "./core/persistence.ts"
 import { Team } from "./core/team.ts"
 import { providers } from "./providers/index.ts"
 import { createModelCatalog } from "./providers/models.ts"
@@ -13,11 +14,13 @@ const cwd = process.cwd()
 const store = new AgentStore(defaultAgentPaths(cwd), providers)
 const { agents, orchestratorId, errors } = store.load()
 const skills = new SkillLibrary(defaultSkillDirs(cwd))
-const stateFile = new StateFile(defaultStatePath(cwd))
+const statePath = defaultStatePath(cwd)
+const stateFile = new StateFile(statePath)
 const { snapshot, error: stateError } = stateFile.load()
 const team = new Team(providers, agents, orchestratorId, {
   cwd,
   persistence: stateFile,
+  archive: new ConversationArchive(defaultArchiveDir(statePath)),
   snapshot,
   resolveSkills: skills.resolve,
 })

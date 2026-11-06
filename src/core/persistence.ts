@@ -25,6 +25,11 @@ export function defaultStatePath(cwd: string, env: NodeJS.ProcessEnv = process.e
   return join(stateHome, "ravex-agents", `${slugify(basename(cwd)) || "project"}-${hash}`, "state.json")
 }
 
+/** Conversations set aside, next to the one that's open. */
+export function defaultArchiveDir(statePath: string): string {
+  return join(dirname(statePath), "archive")
+}
+
 function isSnapshot(value: unknown): value is TeamSnapshot {
   const snapshot = value as Partial<TeamSnapshot> | null
   return (

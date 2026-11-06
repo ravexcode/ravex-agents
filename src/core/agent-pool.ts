@@ -387,19 +387,17 @@ export class AgentPool {
     return saved
   }
 
-  /** Restores saved conversations for agents that still exist. */
+  /** Replaces every conversation with the saved ones, for agents that still exist. Nothing may be running. */
   restore(sessions: SavedSessions, entries: Record<string, Entry[]>): void {
     let highest = 0
     this.#panes = this.#panes.map((pane) => {
       const restored = entries[pane.id] ?? []
       for (const entry of restored) highest = Math.max(highest, entry.id)
-      const status: PaneStatus = restored.length ? "idle" : pane.status
-      return { ...pane, entries: restored, status }
+      return { ...pane, entries: restored, status: "idle", activity: undefined }
     })
     this.#nextEntryId = Math.max(this.#nextEntryId, highest + 1)
-    for (const [id, saved] of Object.entries(sessions)) {
-      const runtime = this.#runtimes.get(id)
-      if (runtime) runtime.sessions = new Map(Object.entries(saved))
+    for (const [id, runtime] of this.#runtimes) {
+      runtime.sessions = new Map(Object.entries(sessions[id] ?? {}))
     }
     this.#onChange()
   }

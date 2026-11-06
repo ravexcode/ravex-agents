@@ -46,6 +46,26 @@ Board rules:
 | Replans per goal | 3 |
 | Rounds of changes per review | 2 |
 
+## Commands
+
+Type `/` in the prompt to see them. `↑`/`↓` choose, `Tab` completes and `Enter` runs.
+
+| Command | Action |
+|---|---|
+| `/new` (`/clear`) | Start a new conversation. The current one stays available in `/resume` |
+| `/resume` | Go back to an earlier conversation, with its tasks, room and agent sessions |
+| `/agent [name]` | Talk to another agent. In the list, `e` changes its model and everything else about it |
+| `/team` | Create, edit or delete agents |
+| `/tasks` | Open the task list |
+| `/mode [edit\|read-only]` | Switch between read-only and edit |
+| `/settings` | Open the settings |
+| `/help` | List the commands |
+| `/quit` (`/exit`) | Stop everything and quit |
+
+`/new` and `/resume` wait until nothing is running. Models belong to agents here, so `/agent` takes the place of the usual `/model`.
+
+A path such as `/etc/hosts` is sent as a message. To send anything else that starts with `/`, start it with a space.
+
 ## Keys
 
 | Key | Action |

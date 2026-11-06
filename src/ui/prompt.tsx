@@ -7,15 +7,16 @@ export interface PromptProps {
   focused: boolean
   placeholder: string
   onSubmit: () => void
+  onInput?: (value: string) => void
 }
 
-export function Prompt({ inputRef, focused, placeholder, onSubmit }: PromptProps) {
+export function Prompt({ inputRef, focused, placeholder, onSubmit, onInput }: PromptProps) {
   return (
     <box flexDirection="row" height={1} marginTop={1} flexShrink={0}>
       <text fg={focused ? ACCENT : MUTED} flexShrink={0}>
         {"› "}
       </text>
-      <input ref={inputRef} flexGrow={1} focused={focused} placeholder={placeholder} onSubmit={onSubmit} />
+      <input ref={inputRef} flexGrow={1} focused={focused} placeholder={placeholder} onSubmit={onSubmit} onInput={onInput} />
     </box>
   )
 }

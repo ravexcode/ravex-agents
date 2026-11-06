@@ -6,6 +6,7 @@ import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
 import type { Skill } from "./agents/skills.ts"
 import { AgentStore, type AgentPaths } from "./agents/store.ts"
+import { ConversationArchive } from "./core/archive.ts"
 import { App } from "./app.tsx"
 import { Team } from "./core/team.ts"
 import type { ListModels } from "./providers/models.ts"
@@ -73,7 +74,11 @@ async function setup(width = 100, listModels: ListModels = defaultModels, height
     })
   const store = new AgentStore(paths, providers)
   const { agents, orchestratorId, errors } = store.load()
-  const team = new Team(providers, agents, orchestratorId, { run, isAvailable: () => true })
+  const team = new Team(providers, agents, orchestratorId, {
+    run,
+    isAvailable: () => true,
+    archive: new ConversationArchive(join(dir, "archive")),
+  })
 
   let view!: Awaited<ReturnType<typeof testRender>>
   await act(async () => {
@@ -500,6 +505,195 @@ test("the logo leaves when there's no room for it", () =>
     undefined,
     10,
   ))
+
+test("typing / offers the commands, narrowed as you type", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/")
+    let screen = await ctx.frame()
+    expect(screen).toContain("/new")
+    expect(screen).toContain("/resume")
+    expect(screen).toContain("/agent [name]")
+    await ctx.type("re")
+    screen = await ctx.frame()
+    expect(screen).toContain("/resume")
+    expect(screen).not.toContain("/agent [name]")
+    expect(ctx.calls.length).toBe(0)
+  }))
+
+test("Esc closes the commands without cancelling anything", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Look around")
+    await ctx.enter()
+    await ctx.type("/")
+    await ctx.escape()
+    const screen = await ctx.frame()
+    expect(screen).not.toContain("/resume")
+    expect(ctx.calls[0]?.signal.aborted).toBe(false)
+  }))
+
+test("arrows and Enter run the selected command, and Tab completes instead of switching", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/")
+    await ctx.arrow("down")
+    await ctx.arrow("down")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("Agents")
+    await ctx.escape()
+
+    await ctx.type("/ag")
+    await ctx.press("TAB")
+    await ctx.type("codex")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("Codex · codex")
+    expect(ctx.calls.length).toBe(0)
+  }))
+
+test("/agent lists the agents, and opens one to talk to it or to change its model", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/agent")
+    await ctx.enter()
+    let screen = await ctx.frame()
+    expect(screen).toContain("Lead")
+    expect(screen).toContain("orchestrator")
+    expect(screen).toContain("Codex")
+
+    await ctx.arrow("down")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("Message ")
+
+    await ctx.type("/agent")
+    await ctx.enter()
+    await ctx.type("e")
+    expect(await ctx.frame()).toContain("Ctrl+S save")
+  }))
+
+test("/agent with a name that doesn't exist says so", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/agent nobody")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain('Nobody is called "nobody"')
+  }))
+
+test("/new sets the conversation aside, and /resume brings it back with its session", () =>
+  withApp(async (ctx) => {
+    await ctx.type("First question")
+    await ctx.enter()
+    const first = ctx.calls[0] as Call
+    await emit(first, { type: "session", sessionId: "abc" })
+    await ctx.reply(first, "First answer")
+
+    await ctx.type("/new")
+    await ctx.enter()
+    let screen = await ctx.frame()
+    expect(screen).toContain("New conversation.")
+    expect(screen).not.toContain("First answer")
+
+    await ctx.type("Second question")
+    await ctx.enter()
+    const second = ctx.calls[1] as Call
+    expect(second.request.sessionId).toBeUndefined()
+    await emit(second, { type: "session", sessionId: "def" })
+    await ctx.reply(second, "Second answer")
+
+    await ctx.type("/resume")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("First question")
+    expect(screen).not.toContain("Second question")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("First answer")
+    expect(screen).not.toContain("Second answer")
+
+    await ctx.type("Follow up")
+    await ctx.enter()
+    expect(ctx.calls[2]?.request.sessionId).toBe("abc")
+
+    await ctx.reply(ctx.calls[2] as Call, "Done")
+    await ctx.type("/resume")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("Second question")
+    expect(screen).not.toContain("First question")
+  }))
+
+test("/new and /resume wait until nothing is running", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Look around")
+    await ctx.enter()
+    await ctx.type("/new")
+    await ctx.enter()
+    const screen = await ctx.frame()
+    expect(screen).toContain("Agents are working")
+    expect(screen).toContain("> Look around")
+    expect(ctx.calls[0]?.signal.aborted).toBe(false)
+  }))
+
+test("/resume says so when there's nothing to go back to", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/resume")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("There are no earlier conversations.")
+  }))
+
+test("/mode switches the session, or sets it", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/mode")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("EDIT")
+    await ctx.type("/mode edit")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("EDIT")
+    await ctx.type("/mode read-only")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("READ-ONLY")
+    await ctx.type("/mode nope")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("/mode takes edit or read-only.")
+  }))
+
+test("/help lists the commands and runs the chosen one", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/help")
+    await ctx.enter()
+    const screen = await ctx.frame()
+    expect(screen).toContain("Commands")
+    expect(screen).toContain("/quit")
+    await ctx.arrow("down")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("There are no earlier conversations.")
+  }))
+
+test("an unknown command isn't sent, and stays in the prompt", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/nope")
+    await ctx.enter()
+    const screen = await ctx.frame()
+    expect(screen).toContain("/nope isn't a command")
+    expect(screen).toContain("› /nope")
+    expect(ctx.calls.length).toBe(0)
+  }))
+
+test("a command doesn't swallow a message written after it", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/new fix the login")
+    await ctx.enter()
+    const screen = await ctx.frame()
+    expect(screen).toContain("/new doesn't take anything after it.")
+    expect(screen).toContain("› /new fix the login")
+  }))
+
+test("paths and messages with a leading space reach the agent", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/etc/hosts looks wrong")
+    await ctx.enter()
+    expect(ctx.calls[0]?.request.prompt).toContain("/etc/hosts looks wrong")
+    await ctx.reply(ctx.calls[0] as Call, "Ok")
+    await ctx.type(" /new is what I typed")
+    await ctx.enter()
+    expect(ctx.calls[1]?.request.prompt).toContain("/new is what I typed")
+  }))
 
 test("a room turn of the orchestrator stays out of its chat", () =>
   withApp(async (ctx) => {
