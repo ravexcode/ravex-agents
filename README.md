@@ -22,6 +22,8 @@ The tree on the left lists your agents, and the right side shows the selected ag
 
 Conversations last until you quit the app.
 
+To run it without Bun, compile the executable with `bun run build` and run `dist/ravex-agents` from your project. It includes Bun and OpenTUI, but it still needs the agent CLIs installed.
+
 ## Keys
 
 | Key | Action |
@@ -109,6 +111,7 @@ Edit mode isn't equally strict across providers. OpenCode can run shell commands
 | `bun run start` | Run the app |
 | `bun test` | Run the tests |
 | `bun run typecheck` | Type-check the project |
+| `bun run build` | Compile a standalone executable for Linux with glibc to `dist/ravex-agents` |
 
 ## Adding a provider
 
