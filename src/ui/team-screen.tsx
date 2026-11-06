@@ -1,5 +1,6 @@
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useTerminalDimensions } from "@opentui/react"
 import type { Agent } from "../agents/types.ts"
+import { useKeys } from "./keys.ts"
 import { ACCENT, fit, MUTED, TEXT } from "./theme.ts"
 
 const NAME_WIDTH = 16
@@ -42,7 +43,7 @@ export function TeamScreen(props: TeamScreenProps) {
   const toolsWidth = Math.max(MIN_TOOLS_WIDTH, Math.floor(shared * 0.4))
   const engineWidth = shared - toolsWidth
 
-  useKeyboard((key) => {
+  useKeys((key) => {
     if (key.name === "escape") onClose()
     else if (key.name === "up") onMove((cursor - 1 + agents.length) % agents.length)
     else if (key.name === "down") onMove((cursor + 1) % agents.length)

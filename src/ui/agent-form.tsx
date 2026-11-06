@@ -1,5 +1,5 @@
 import type { InputRenderable, TextareaRenderable } from "@opentui/core"
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useTerminalDimensions } from "@opentui/react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { slugify } from "../agents/identity.ts"
 import type { Skill } from "../agents/skills.ts"
@@ -7,6 +7,7 @@ import { AGENT_TEMPLATES } from "../agents/templates.ts"
 import { modeForTools, type Agent, type AgentDefinition, type SavableOrigin } from "../agents/types.ts"
 import type { ListModels } from "../providers/models.ts"
 import { TOOL_IDS, type ProviderId, type ToolId } from "../providers/types.ts"
+import { useKeys } from "./keys.ts"
 import { ACCENT, DANGER, fit, MUTED, TEXT, TOOL_LABELS } from "./theme.ts"
 
 const LABEL_WIDTH = 14
@@ -241,7 +242,7 @@ export function AgentForm({ agent, providerIds, lockedTools, listModels, listSki
     setError(onSave(definition, origin))
   }
 
-  useKeyboard((key) => {
+  useKeys((key) => {
     if (key.ctrl && key.name === "s") {
       save()
     } else if (key.name === "escape") {

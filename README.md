@@ -55,13 +55,16 @@ Board rules:
 | `Esc` | Cancel what the view is doing. On a plan, discard it. On a pause, pressing it twice closes the goal |
 | `PgUp` / `PgDn` | Scroll the conversation |
 | `Ctrl+T` | Tasks: `↑`/`↓` move, `Enter` opens the detail, `r` reassigns |
+| `Ctrl+P` / `F2` | Settings: create an agent, open the team or switch the session mode |
 | `Ctrl+G` | Team: `n` new, `e` edit, `d` delete, `o` make orchestrator |
 | `Ctrl+E` | Switch the session between read-only and edit |
 | `Ctrl+C` | Stop everything and quit |
 
+`Ctrl+Shift+P` also opens the settings if your terminal passes it on. Many terminals and editors keep it for their own command palette, so use `Ctrl+P` or `F2` there.
+
 ## Your team
 
-Press `Ctrl+G`, then `n`, to create an agent. Each one has a name, a description that tells the orchestrator what to assign to it, a provider and model, skills, tools and instructions.
+Press `Ctrl+G`, then `n`, or choose **New agent** in the settings, to create an agent. Each one has a name, a description that tells the orchestrator what to assign to it, a provider and model, skills, tools and instructions.
 
 There's a built-in `Lead`, which is the default orchestrator, and one agent per provider. You can edit them all: that saves a copy that overrides the original, and deleting the copy restores it.
 

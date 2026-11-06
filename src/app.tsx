@@ -1,5 +1,5 @@
 import { TextAttributes, type InputRenderable, type ScrollBoxRenderable } from "@opentui/core"
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useTerminalDimensions } from "@opentui/react"
 import { useRef, useState, useSyncExternalStore } from "react"
 import { validateAgent } from "./agents/identity.ts"
 import type { Skill } from "./agents/skills.ts"
@@ -10,7 +10,9 @@ import type { ListModels } from "./providers/models.ts"
 import type { Provider } from "./providers/types.ts"
 import { AgentForm } from "./ui/agent-form.tsx"
 import { ChatPanel, RoomPanel } from "./ui/conversation.tsx"
+import { isSettingsKey, useKeys } from "./ui/keys.ts"
 import { Prompt } from "./ui/prompt.tsx"
+import { SettingsScreen } from "./ui/settings-screen.tsx"
 import { TaskDetail } from "./ui/task-detail.tsx"
 import { TaskPanel } from "./ui/task-panel.tsx"
 import { TeamScreen } from "./ui/team-screen.tsx"
@@ -27,6 +29,7 @@ const MODE_WIDTH = 11
 
 type Screen =
   | { kind: "main" }
+  | { kind: "settings" }
   | { kind: "team" }
   | { kind: "form"; agent?: Agent }
   | { kind: "confirm-delete"; agent: Agent }
@@ -164,6 +167,13 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
     if (next) setNotice(team.reassign(selectedTask.id, next.id))
   }
 
+  const openFromMain = (next: Screen) => {
+    setNotice(undefined)
+    setScreen(next)
+    // Some CLIs take seconds to list models, so the form shouldn't be the first to ask.
+    for (const provider of providerIds) listModels(provider).catch(() => {})
+  }
+
   const handleEscape = () => {
     if (currentView === ROOM_VIEW) {
       team.cancelRoom()
@@ -188,7 +198,7 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
     setCloseArmed(false)
   }
 
-  useKeyboard((key) => {
+  useKeys((key) => {
     if (screen.kind === "confirm-delete") {
       if (key.name === "y") {
         try {
@@ -245,11 +255,10 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
         setNotice(undefined)
         setPanelFocused(true)
       }
+    } else if (isSettingsKey(key)) {
+      openFromMain({ kind: "settings" })
     } else if (key.ctrl && key.name === "g") {
-      setNotice(undefined)
-      setScreen({ kind: "team" })
-      // Some CLIs take seconds to list models, so the form shouldn't be the first to ask.
-      for (const provider of providerIds) listModels(provider).catch(() => {})
+      openFromMain({ kind: "team" })
     }
   })
 
@@ -288,6 +297,21 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
         onSave={(definition, origin) => saveAgent(definition, origin, editing)}
         onCancel={() => setScreen({ kind: "team" })}
       />
+    )
+  }
+
+  if (screen.kind === "settings") {
+    return (
+      <box flexDirection="column" flexGrow={1}>
+        <SettingsScreen
+          mode={state.mode}
+          onNewAgent={() => setScreen({ kind: "form" })}
+          onTeam={() => setScreen({ kind: "team" })}
+          onToggleMode={() => team.toggleMode()}
+          onClose={() => setScreen({ kind: "main" })}
+        />
+        {errorLines}
+      </box>
     )
   }
 
@@ -373,7 +397,7 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
       ? "Enter approve · type to change · Esc discard · ^T tasks · ^E mode"
       : onOrchestrator && board.phase === "paused"
         ? "Enter continue · type what to do · Esc close goal · ^T tasks"
-        : "Tab switch · ^T tasks · ^G team · ^E mode · Esc cancel · ^C quit"
+        : "Tab switch · ^P settings · ^T tasks · ^G team · ^E mode · Esc cancel · ^C quit"
 
   const shownTabs = visibleTabs(tabs, tabIndex, Math.max(10, width - MODE_WIDTH - 2))
 

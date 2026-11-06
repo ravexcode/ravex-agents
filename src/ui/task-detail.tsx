@@ -1,9 +1,9 @@
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core"
-import { useKeyboard } from "@opentui/react"
 import { useRef } from "react"
 import type { Entry } from "../core/agent-pool.ts"
 import type { Task } from "../core/board.ts"
 import { Entries, HIDDEN_SCROLLBAR } from "./conversation.tsx"
+import { useKeys } from "./keys.ts"
 import { Prompt } from "./prompt.tsx"
 import { ACCENT, MUTED, TASK_STATUS_COLORS, TASK_STATUS_LABELS, TEXT } from "./theme.ts"
 
@@ -36,7 +36,7 @@ export function TaskDetail({ task, entries, nameOf, onComment, onClose }: TaskDe
   const input = useRef<InputRenderable>(null)
   const scroll = useRef<ScrollBoxRenderable>(null)
 
-  useKeyboard((key) => {
+  useKeys((key) => {
     if (key.name === "escape") onClose()
     else if (key.name === "pageup") scroll.current?.scrollBy(-PAGE_LINES)
     else if (key.name === "pagedown") scroll.current?.scrollBy(PAGE_LINES)

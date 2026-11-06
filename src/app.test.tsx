@@ -105,6 +105,12 @@ async function setup(width = 100, listModels: ListModels = defaultModels, height
       view.mockInput.pressKey(key, modifiers)
       await Bun.sleep(settleMs)
     })
+  /** Sends the exact bytes a terminal would, for keys it can encode in several ways. */
+  const send = (sequence: string) =>
+    act(async () => {
+      view.renderer.stdin.emit("data", Buffer.from(sequence))
+      await Bun.sleep(SETTLE_MS)
+    })
   const arrow = (direction: "up" | "down" | "left" | "right") =>
     act(async () => {
       view.mockInput.pressArrow(direction)
@@ -135,6 +141,7 @@ async function setup(width = 100, listModels: ListModels = defaultModels, height
     calls,
     frame,
     press,
+    send,
     arrow,
     type,
     enter,
@@ -464,6 +471,53 @@ test("Ctrl+G shows the team and marks the orchestrator", () =>
     expect(screen).toContain("Skills")
     await ctx.escape()
     expect(await ctx.frame()).toContain("Describe a goal")
+  }))
+
+test.each([
+  ["Ctrl+P, or Ctrl+Shift+P without the Kitty protocol", "\x10"],
+  ["Ctrl+Shift+P through the Kitty protocol", "\x1b[112;6u"],
+  ["Ctrl+Shift+P through the Kitty protocol, uppercase", "\x1b[80;6u"],
+  ["Ctrl+Shift+P through modifyOtherKeys", "\x1b[27;6;112~"],
+  ["Ctrl+Shift+P through modifyOtherKeys, uppercase", "\x1b[27;6;80~"],
+  ["F2", "\x1bOQ"],
+])("%s opens the settings", (_name, sequence) =>
+  withApp(async (ctx) => {
+    await ctx.send(sequence)
+    expect(await ctx.frame()).toContain("Settings")
+    await ctx.escape()
+    expect(await ctx.frame()).toContain("Describe a goal")
+  }))
+
+test("Shift works with terminals that report uppercase names", () =>
+  withApp(async (ctx) => {
+    await ctx.send("\x1b[27;6;71~")
+    expect(await ctx.frame()).toContain("Team")
+    await ctx.send("\x1b[27;2;78~")
+    expect(await ctx.frame()).toContain("Ctrl+S save")
+  }))
+
+test("the settings create an agent", () =>
+  withApp(async (ctx) => {
+    await ctx.press("p", { ctrl: true })
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("Ctrl+S save")
+  }))
+
+test("the settings open the team and switch the session mode", () =>
+  withApp(async (ctx) => {
+    await ctx.press("p", { ctrl: true })
+    expect(await ctx.frame()).toContain("READ-ONLY")
+    await ctx.arrow("up")
+    await ctx.enter()
+    let screen = await ctx.frame()
+    expect(screen).toContain("Settings")
+    expect(screen).toContain("EDIT")
+    expect(screen).not.toContain("READ-ONLY")
+
+    await ctx.arrow("up")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("★ Lead")
   }))
 
 /** Opens the form for a new agent and leaves the focus on the given field. */
