@@ -1,7 +1,7 @@
 import type { SkillInstructions } from "../agents/skills.ts"
 import type { Agent } from "../agents/types.ts"
 import type { RunTurn } from "../providers/runner.ts"
-import type { PermissionMode, Provider } from "../providers/types.ts"
+import type { PermissionMode, Provider, ProviderId } from "../providers/types.ts"
 import { AgentPool, type Entry, type Pane } from "./agent-pool.ts"
 import type { ArchivedConversation, ConversationArchive } from "./archive.ts"
 import { parseBlock, truncateResult } from "./blocks.ts"
@@ -73,7 +73,7 @@ export interface TeamOptions {
   /** Where /new and /resume keep conversations. Without it, /new forgets them. */
   archive?: ConversationArchive
   /** Turns skill names into instructions. Agents get no skills without it. */
-  resolveSkills?: (names: string[]) => SkillInstructions
+  resolveSkills?: (names: string[], provider?: ProviderId) => SkillInstructions
 }
 
 export function lowerMode(...modes: PermissionMode[]): PermissionMode {
@@ -111,7 +111,7 @@ export class Team {
   readonly #pool: AgentPool
   readonly #persistence?: StatePersistence
   readonly #archive?: ConversationArchive
-  readonly #resolveSkills?: (names: string[]) => SkillInstructions
+  readonly #resolveSkills?: (names: string[], provider?: ProviderId) => SkillInstructions
   readonly #listeners = new Set<() => void>()
   readonly #active = new Map<number, string>()
   #state: TeamState
@@ -177,8 +177,9 @@ export class Team {
   // The orchestrator
 
   /** Returns a notice if the message can't be handled right now. */
-  sendToOrchestrator(text: string): string | undefined {
+  sendToOrchestrator(text: string, shown = text): string | undefined {
     const message = text.trim()
+    const display = shown.trim()
     if (!message) return undefined
     const { board } = this.#state
 
@@ -187,10 +188,10 @@ export class Team {
       case "wrapping-up":
         return "The orchestrator is working. Press Esc to cancel it."
       case "running":
-        void this.#chatDuringRun(message)
+        void this.#chatDuringRun(message, display)
         return undefined
       case "idle":
-        void this.#planTurn({ prompt: message, display: message, newGoal: message })
+        void this.#planTurn({ prompt: message, display, newGoal: display })
         return undefined
       case "proposed":
       case "paused": {
@@ -199,12 +200,12 @@ export class Team {
             ? `Reached the limit of ${MAX_REPLANS} replans: approve or discard this plan.`
             : `Reached the limit of ${MAX_REPLANS} replans: press Esc to close the goal.`
         }
-        if (board.phase === "paused") this.#commentOnBlocked(message)
+        if (board.phase === "paused") this.#commentOnBlocked(display)
         const prompt =
           board.phase === "proposed"
             ? `Change the proposed plan: ${message}\n\nSend the complete new plan.`
             : buildUserReplyPrompt(message, this.#state.board)
-        void this.#planTurn({ prompt, display: message })
+        void this.#planTurn({ prompt, display })
         return undefined
       }
     }
@@ -240,7 +241,7 @@ export class Team {
     if (!agent) return ""
     if (!agent.skills?.length || !this.#resolveSkills) return agent.instructions
 
-    const { text, missing } = this.#resolveSkills(agent.skills)
+    const { text, missing } = this.#resolveSkills(agent.skills, agent.provider)
     if (missing.length > 0) {
       this.#pool.addEntry(agent.id, "error", `Skills not found: ${missing.join(", ")}`)
     }
@@ -324,11 +325,11 @@ export class Team {
     return hasUnresolved(tasks) || tasks.some((task) => task.status === "review") ? "paused" : "idle"
   }
 
-  async #chatDuringRun(message: string): Promise<void> {
+  async #chatDuringRun(message: string, display: string): Promise<void> {
     const id = this.#state.orchestratorId
     const outcome = await this.#pool.turn(id, {
       prompt: buildRunningChatPrompt(message, this.#state.board),
-      display: message,
+      display,
       sessionKey: ORCHESTRATOR_SESSION,
       mode: "read-only",
       instructions: this.#orchestratorInstructions(),
@@ -602,16 +603,24 @@ export class Team {
 
   // Talking to one agent
 
-  sendToAgent(id: string, text: string): string | undefined {
+  sendToAgent(id: string, text: string, shown = text): string | undefined {
     const message = text.trim()
     if (!message) return undefined
     const agent = this.#agent(id)
     if (!agent) return "That agent doesn't exist."
-    void this.#directTurn(agent, message)
+    void this.#directTurn(agent, message, shown.trim())
     return undefined
   }
 
-  async #directTurn(agent: Agent, message: string): Promise<void> {
+  /** The prompt that makes an agent use a skill for this request. Undefined if the skill can't be found. */
+  skillPrompt(name: string, request: string, agentId: string): string | undefined {
+    const resolved = this.#resolveSkills?.([name], this.#agent(agentId)?.provider)
+    if (!resolved?.text) return undefined
+    const ask = request ? `Follow it for this request:\n\n${request}` : "Follow it now."
+    return `${resolved.text}\n\nThe user chose the skill above with /${name}. ${ask}`
+  }
+
+  async #directTurn(agent: Agent, message: string, display: string): Promise<void> {
     const { board } = this.#state
     const editing =
       this.#directEdits > 0 || board.tasks.some((task) => task.status === "running" && task.edits)
@@ -625,7 +634,7 @@ export class Team {
     if (mode === "edit") this.#directEdits++
     await this.#pool.turn(agent.id, {
       prompt: message,
-      display: message,
+      display,
       sessionKey: DIRECT_SESSION,
       mode,
       instructions: this.#ownInstructions(agent),

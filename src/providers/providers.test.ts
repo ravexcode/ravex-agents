@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { parseCodexEfforts } from "./models.ts"
 import { claude } from "./claude.ts"
 import { codex } from "./codex.ts"
 import { opencode } from "./opencode.ts"
@@ -297,4 +298,26 @@ test("each CLI is asked for its reasoning", () => {
   const request = { prompt: "hi", cwd: "/repo", mode: "read-only" as const }
   expect(claude.buildArgs(request).join(" ")).toContain("--thinking-display summarized")
   expect(opencode.buildArgs(request)).toContain("--thinking")
+})
+
+test("each CLI is asked for the chosen effort", () => {
+  const request = { prompt: "hi", cwd: "/repo", mode: "read-only" as const, effort: "high" }
+  expect(claude.buildArgs(request).join(" ")).toContain("--effort high")
+  expect(codex.buildArgs(request).join(" ")).toContain('model_reasoning_effort="high"')
+  expect(opencode.buildArgs({ ...request, model: "openai/gpt" })).toContain("openai/gpt#high")
+  expect(opencode.buildArgs({ ...request, model: "openai/gpt#max" })).toContain("openai/gpt#max")
+  expect(claude.buildArgs({ prompt: "hi", cwd: "/repo", mode: "read-only" }).join(" ")).not.toContain("--effort")
+})
+
+test("reads Codex's levels for a model, or for any model", () => {
+  const output = JSON.stringify({
+    models: [
+      { slug: "a", visibility: "list", supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] },
+      { slug: "b", visibility: "list", supported_reasoning_levels: [{ effort: "low" }, { effort: "ultra" }] },
+      { slug: "hidden", visibility: "hide", supported_reasoning_levels: [{ effort: "secret" }] },
+    ],
+  })
+  expect(parseCodexEfforts(output, "a")).toEqual(["low", "high"])
+  expect(parseCodexEfforts(output)).toEqual(["low", "high", "ultra"])
+  expect(parseCodexEfforts(output, "missing")).toEqual([])
 })

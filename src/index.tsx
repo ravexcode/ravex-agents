@@ -9,7 +9,7 @@ import { ConversationArchive } from "./core/archive.ts"
 import { defaultArchiveDir, defaultStatePath, StateFile } from "./core/persistence.ts"
 import { Team } from "./core/team.ts"
 import { providers } from "./providers/index.ts"
-import { createModelCatalog } from "./providers/models.ts"
+import { createEffortCatalog, createModelCatalog } from "./providers/models.ts"
 import { BACKGROUND } from "./ui/theme.ts"
 
 const cli = parseCli(process.argv.slice(2), process.cwd())
@@ -55,6 +55,7 @@ try {
       store={store}
       providers={providers}
       listModels={createModelCatalog(providers)}
+      listEfforts={createEffortCatalog(providers)}
       listSkills={listSkills}
       initialErrors={errors}
       initialNotice={stateError}

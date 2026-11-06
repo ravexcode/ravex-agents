@@ -52,7 +52,8 @@ export interface ChatPanelProps {
 /** A conversation with the orchestrator or with one agent. */
 export function ChatPanel({ pane, hideRoom, scrollRef }: ChatPanelProps) {
   const status = pane.available ? PANE_STATUS_LABELS[pane.status] : "not installed"
-  const engine = pane.model ? `${pane.provider}/${pane.model}` : pane.provider
+  const model = pane.model ? `${pane.provider}/${pane.model}` : pane.provider
+  const engine = pane.effort ? `${model} · ${pane.effort}` : model
 
   return (
     <box flexGrow={1} flexBasis={0} flexDirection="column">

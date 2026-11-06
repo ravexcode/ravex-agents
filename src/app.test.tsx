@@ -9,7 +9,7 @@ import { AgentStore, type AgentPaths } from "./agents/store.ts"
 import { ConversationArchive } from "./core/archive.ts"
 import { App } from "./app.tsx"
 import { Team } from "./core/team.ts"
-import type { ListModels } from "./providers/models.ts"
+import { createEffortCatalog, type ListModels } from "./providers/models.ts"
 import type { RunTurn, TurnResult } from "./providers/runner.ts"
 import type { Provider, ProviderEvent, ProviderId, ToolId, TurnRequest } from "./providers/types.ts"
 
@@ -24,11 +24,12 @@ const fake = (id: ProviderId, label: string): Provider => ({
   binary: id,
   buildArgs: () => [],
   parseLine: () => [],
+  listEfforts: async () => ["low", "high"],
 })
 const providers = [
   fake("claude", "Claude"),
   { ...fake("codex", "Codex"), lockedTools: ["shell", "mcp"] as ToolId[] },
-  fake("opencode", "OpenCode"),
+  { ...fake("opencode", "OpenCode"), effortNeedsModel: true },
 ]
 const skills: Skill[] = [
   { name: "caveman", description: "Talk less", path: "/s/caveman/SKILL.md" },
@@ -36,6 +37,7 @@ const skills: Skill[] = [
   { name: "go-testing", description: "Test Go code", path: "/s/go-testing/SKILL.md" },
 ]
 const listSkills = () => skills
+const efforts = createEffortCatalog(providers)
 
 let dir: string
 let paths: AgentPaths
@@ -78,6 +80,7 @@ async function setup(width = 100, listModels: ListModels = defaultModels, height
     run,
     isAvailable: () => true,
     archive: new ConversationArchive(join(dir, "archive")),
+    resolveSkills: (names) => ({ text: names.map((name) => `# Skill: ${name}`).join("\n"), missing: [] }),
   })
 
   let view!: Awaited<ReturnType<typeof testRender>>
@@ -88,6 +91,7 @@ async function setup(width = 100, listModels: ListModels = defaultModels, height
         store={store}
         providers={providers}
         listModels={listModels}
+        listEfforts={efforts}
         listSkills={listSkills}
         initialErrors={errors}
       />,
@@ -693,6 +697,183 @@ test("paths and messages with a leading space reach the agent", () =>
     await ctx.type(" /new is what I typed")
     await ctx.enter()
     expect(ctx.calls[1]?.request.prompt).toContain("/new is what I typed")
+  }))
+
+test("the menu offers skills after the commands", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/cav")
+    const screen = await ctx.frame()
+    expect(screen).toContain("/caveman [request]")
+    expect(screen).toContain("Talk less")
+    expect(screen).not.toContain("/new")
+  }))
+
+test("/<skill> sends the skill with the request, and shows only what was typed", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/caveman be brief")
+    await ctx.enter()
+    const prompt = ctx.calls[0]?.request.prompt ?? ""
+    expect(prompt).toContain("# Skill: caveman")
+    expect(prompt).toContain("be brief")
+    const screen = await ctx.frame()
+    expect(screen).toContain("> /caveman be brief")
+    expect(screen).not.toContain("# Skill")
+    expect(ctx.team.getState().board.goal ?? "").not.toContain("# Skill")
+  }))
+
+test("choosing a skill from the menu sends it without a request", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/go-")
+    await ctx.enter()
+    expect(ctx.calls[0]?.request.prompt).toContain("# Skill: go-testing")
+    expect(ctx.calls[0]?.request.prompt).toContain("Follow it now.")
+  }))
+
+test("a skill goes to the agent being talked to", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/agent codex")
+    await ctx.enter()
+    await ctx.type("/caveman hi")
+    await ctx.enter()
+    expect(ctx.calls[0]?.provider).toBe("codex")
+    expect(await ctx.frame()).toContain("> /caveman hi")
+  }))
+
+test("the room says where skills can be used", () =>
+  withApp(async (ctx) => {
+    await ctx.press("TAB")
+    await ctx.type("/caveman hi")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("Skills run in a conversation with an agent")
+    expect(ctx.calls.length).toBe(0)
+  }))
+
+test("/skills lists them, and choosing one leaves it ready in the prompt", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/skills")
+    await ctx.enter()
+    let screen = await ctx.frame()
+    expect(screen).toContain("Skills · 3")
+    expect(screen).toContain("clean-code")
+    expect(screen).toContain("Write clean code")
+    await ctx.arrow("down")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("› /clean-code")
+    expect(ctx.calls.length).toBe(0)
+
+    await ctx.type("tidy this")
+    await ctx.enter()
+    expect(ctx.calls[0]?.request.prompt).toContain("# Skill: clean-code")
+    expect(ctx.calls[0]?.request.prompt).toContain("tidy this")
+  }))
+
+test("the menu closes when the prompt comes back empty from another screen", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/")
+    await ctx.press("g", { ctrl: true })
+    await ctx.escape()
+    expect(await ctx.frame()).not.toContain("/resume")
+  }))
+
+test("/effort lists the agent's levels, and the choice reaches its next turn", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/effort")
+    await ctx.enter()
+    let screen = await ctx.frame()
+    expect(screen).toContain("Effort · Lead")
+    expect(screen).toContain("default")
+    expect(screen).toContain("current")
+    expect(screen).toContain("high")
+
+    await ctx.arrow("down")
+    await ctx.arrow("down")
+    await ctx.enter()
+    screen = await ctx.frame()
+    expect(screen).toContain("Lead now thinks at high")
+    expect(screen).toContain("· high ·")
+    expect(savedAgents().find((agent: { id: string }) => agent.id === "lead").effort).toBe("high")
+
+    await ctx.type("Look around")
+    await ctx.enter()
+    expect(ctx.calls[0]?.request.effort).toBe("high")
+  }))
+
+test("a list keeps up with arrows that arrive together", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/effort")
+    await ctx.enter()
+    await ctx.send("\x1b[B\x1b[B")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("Lead now thinks at high")
+  }))
+
+test("/effort keeps the conversation going", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Look around")
+    await ctx.enter()
+    const first = ctx.calls[0] as Call
+    await act(async () => {
+      first.emit({ type: "session", sessionId: "abc" })
+    })
+    await ctx.reply(first, "Ok")
+    await ctx.type("/effort low")
+    await ctx.enter()
+    await ctx.type("Again")
+    await ctx.enter()
+    expect(ctx.calls[1]?.request.sessionId).toBe("abc")
+    expect(ctx.calls[1]?.request.effort).toBe("low")
+  }))
+
+test("/effort default goes back to the CLI's choice", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/effort high")
+    await ctx.enter()
+    await ctx.type("/effort default")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("back to its CLI's default")
+    expect(savedAgents().find((agent: { id: string }) => agent.id === "lead").effort).toBeUndefined()
+  }))
+
+test("/effort names the levels when one doesn't exist", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/effort nope")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain('"nope" isn\'t one of Lead\'s levels: low, high, default.')
+  }))
+
+test("/effort asks for an agent in the room", () =>
+  withApp(async (ctx) => {
+    await ctx.press("TAB")
+    await ctx.type("/effort")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("Effort belongs to an agent")
+  }))
+
+test("/effort asks for a model when the CLI's levels depend on it", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/agent opencode")
+    await ctx.enter()
+    await ctx.type("/effort high")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("OpenCode sets the level per model")
+  }))
+
+test("editing an agent keeps its effort, unless its engine changes", () =>
+  withApp(async (ctx) => {
+    await ctx.type("/effort high")
+    await ctx.enter()
+    await ctx.press("g", { ctrl: true })
+    await ctx.type("e")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents().find((agent: { id: string }) => agent.id === "lead").effort).toBe("high")
+
+    await ctx.type("e")
+    await ctx.press("TAB")
+    await ctx.press("TAB")
+    await ctx.arrow("right")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents().find((agent: { id: string }) => agent.id === "lead").effort).toBeUndefined()
   }))
 
 test("a room turn of the orchestrator stays out of its chat", () =>

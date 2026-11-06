@@ -34,8 +34,9 @@ export function ListScreen(props: ListScreenProps) {
   useKeys((key) => {
     if (key.name === "escape") onClose()
     else if (!selected) return
-    else if (key.name === "up") setPosition((cursor - 1 + items.length) % items.length)
-    else if (key.name === "down") setPosition((cursor + 1) % items.length)
+    // Several presses can arrive before the next render, as when holding a key down.
+    else if (key.name === "up") setPosition((current) => (current - 1 + items.length) % items.length)
+    else if (key.name === "down") setPosition((current) => (current + 1) % items.length)
     else if (key.name === "return" || key.name === "enter") onSelect(selected)
     else onKey?.(key, selected)
   })

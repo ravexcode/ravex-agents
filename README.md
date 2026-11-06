@@ -64,6 +64,9 @@ Type `/` in the prompt to see them. `↑`/`↓` choose, `Tab` completes and `Ent
 | `/new` (`/clear`) | Start a new conversation. The current one stays available in `/resume` |
 | `/resume` | Go back to an earlier conversation, with its tasks, room and agent sessions |
 | `/agent [name]` | Talk to another agent. In the list, `e` changes its model and everything else about it |
+| `/effort [level]` | Choose how hard the current agent thinks, or `default` |
+| `/skills` | Browse your skills |
+| `/<skill> [request]` | Use a skill in this conversation |
 | `/team` | Create, edit or delete agents |
 | `/tasks` | Open the task list |
 | `/mode [edit\|read-only]` | Switch between read-only and edit |
@@ -128,12 +131,33 @@ The model list filters as you type, and accepts a name that isn't listed.
 
 A skill is a folder with a `SKILL.md` file, the same format the CLIs use. The form lists every skill it finds, so an agent can use one from another CLI's folder. To write your own, add it to `.ravex/skills/<name>/SKILL.md` or `~/.config/ravex-agents/skills/<name>/SKILL.md`.
 
-It looks in these folders, in this order, and the first skill with a given name wins:
+It looks in these folders, in this order:
 
 - In the project: `.ravex/skills`, `.agents/skills`, `.claude/skills`, `.opencode/skills`
 - In your home: `~/.config/ravex-agents/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.config/opencode/skills`
 
-The skills you choose go into the agent's instructions on every turn, up to 60,000 characters in total. Past that, the agent is told which file to read. Once you choose skills for an agent, it no longer sees the others its CLI would find. An agent that never chose keeps what its CLI finds.
+Skills with the same title are joined into one, and `/skills` shows where each was found. If their text differs, an agent gets its own CLI's version, so a Codex agent gets what was written for Codex. A project's version comes before any of them. When neither exists, the first one found is used.
+
+It also finds the skills Claude Code keeps for you: those synced from your account, those of your plugins, named like `figma:figma-use`, and Codex's own in `~/.codex/skills/.system`.
+
+There are two ways to use one:
+
+- **Once**: type `/<skill>` and what you need, as in `/review check the login`. The current agent receives it with that message, and the conversation remembers it afterwards. You can't do this in the room, where a message goes to whoever it mentions.
+- **Always**: choose it in the agent's form, through `/agent` and `e`.
+
+The skills you choose in the form go into the agent's instructions on every turn, up to 60,000 characters in total. Past that, the agent is told which file to read. Once you choose skills for an agent, it no longer sees the others its CLI would find. An agent that never chose keeps what its CLI finds.
+
+### Effort
+
+`/effort` chooses how hard the current agent thinks. Like its model, the level belongs to the agent, stays saved and applies from its next turn, without starting a new conversation.
+
+| CLI | Levels | Notes |
+|---|---|---|
+| Claude Code | `low`, `medium`, `high`, `xhigh`, `max` | |
+| Codex | What `codex debug models` lists for its model | |
+| OpenCode | `low`, `medium`, `high`, `xhigh`, `max` | Needs a model. It can't list a model's levels, and refuses one the model doesn't have |
+
+Changing an agent's provider or model in its form returns it to the default, because levels differ between them.
 
 ### Tools
 

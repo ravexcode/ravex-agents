@@ -17,6 +17,8 @@ export interface TurnRequest {
   sessionId?: string
   /** The CLI's default model when omitted. */
   model?: string
+  /** One of the levels from listEfforts. The CLI's default when omitted. */
+  effort?: string
   instructions?: string
   /** The CLI's full default set when omitted. The permission mode still applies on top. */
   tools?: ToolId[]
@@ -46,5 +48,9 @@ export interface Provider {
   buildEnv?(request: TurnRequest): Record<string, string>
   /** The models this CLI offers. Rejects if they can't be read. */
   listModels?(): Promise<string[]>
+  /** How hard it can think, weakest first. Rejects if they can't be read. */
+  listEfforts?(model?: string): Promise<string[]>
+  /** Its levels belong to a model, so an agent needs one before it can choose. */
+  effortNeedsModel?: boolean
   parseLine(line: string): ProviderEvent[]
 }

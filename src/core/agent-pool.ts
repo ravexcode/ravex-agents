@@ -20,6 +20,7 @@ export interface Pane {
   label: string
   provider: ProviderId
   model?: string
+  effort?: string
   available: boolean
   status: PaneStatus
   /** What it's doing right now, while it's running. */
@@ -151,6 +152,7 @@ export class AgentPool {
         label: agent.name,
         provider: agent.provider,
         ...(agent.model ? { model: agent.model } : {}),
+        ...(agent.effort ? { effort: agent.effort } : {}),
         available: this.isAvailable(agent),
         status: pane?.status ?? "idle",
         activity: pane?.activity,
@@ -241,6 +243,7 @@ export class AgentPool {
         mode: options.mode,
         sessionId: options.sessionKey ? runtime.sessions.get(options.sessionKey) : undefined,
         model: agent.model,
+        effort: agent.effort,
         instructions: options.instructions || undefined,
         tools: agent.tools,
         nativeSkills: agent.skills === undefined,

@@ -44,6 +44,7 @@ function isDefinition(value: unknown, providerIds: Set<ProviderId>): value is Ag
     typeof agent.description === "string" &&
     providerIds.has(agent.provider as ProviderId) &&
     (agent.model === undefined || typeof agent.model === "string") &&
+    (agent.effort === undefined || typeof agent.effort === "string") &&
     typeof agent.instructions === "string" &&
     (agent.mode === "read-only" || agent.mode === "edit") &&
     (agent.tools === undefined ||
@@ -60,6 +61,7 @@ function normalize(agent: AgentDefinition): AgentDefinition {
     description: agent.description,
     provider: agent.provider,
     ...(agent.model ? { model: agent.model } : {}),
+    ...(agent.effort ? { effort: agent.effort } : {}),
     instructions: agent.instructions,
     mode: agent.mode,
     ...(agent.tools ? { tools: agent.tools } : {}),

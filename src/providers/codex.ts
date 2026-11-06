@@ -1,4 +1,4 @@
-import { parseCodexModels, readCommand } from "./models.ts"
+import { parseCodexEfforts, parseCodexModels, readCommand } from "./models.ts"
 import { parseJsonObject, truncateDetail } from "./parse.ts"
 import type { Provider, ProviderEvent } from "./types.ts"
 
@@ -43,7 +43,9 @@ export const codex: Provider = {
 
   listModels: async () => parseCodexModels(await readCommand(["codex", "debug", "models"])),
 
-  buildArgs({ prompt, mode, sessionId, model, instructions, tools, nativeSkills }) {
+  listEfforts: async (model) => parseCodexEfforts(await readCommand(["codex", "debug", "models"]), model),
+
+  buildArgs({ prompt, mode, sessionId, model, effort, instructions, tools, nativeSkills }) {
     // `codex exec resume` has no --sandbox flag, so both paths set it as config.
     const sandbox = mode === "edit" ? "workspace-write" : "read-only"
     return [
@@ -53,6 +55,7 @@ export const codex: Provider = {
       "-c",
       `sandbox_mode="${sandbox}"`,
       ...(model ? ["-m", model] : []),
+      ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
       // Config values are parsed as TOML, whose strings accept JSON's escapes.
       ...(instructions ? ["-c", `developer_instructions=${JSON.stringify(instructions)}`] : []),
       ...(tools && !tools.includes("web") ? ["-c", 'web_search="disabled"'] : []),

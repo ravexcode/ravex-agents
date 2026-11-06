@@ -14,6 +14,8 @@ export interface AgentDefinition {
   instructions: string
   /** The most this agent may do; the session and the task can lower it. */
   mode: PermissionMode
+  /** How hard it thinks, in its CLI's own levels. The CLI's default when omitted. */
+  effort?: string
   /** Everything the CLI offers when omitted. Reading the project is always allowed. */
   tools?: ToolId[]
   /** Names of the skills it always has. When omitted, it has whatever its CLI finds. */

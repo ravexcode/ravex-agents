@@ -37,6 +37,36 @@ export function parseCodexModels(output: string): string[] {
   )
 }
 
+/** The levels of that model, or of any model when it's using the CLI's default. */
+export function parseCodexEfforts(output: string, model?: string): string[] {
+  const data = JSON.parse(output) as {
+    models?: { slug?: unknown; visibility?: unknown; supported_reasoning_levels?: { effort?: unknown }[] }[]
+  }
+  const models = (data.models ?? []).filter((candidate) =>
+    model ? candidate.slug === model : candidate.visibility === "list",
+  )
+  const levels = models.flatMap((candidate) =>
+    (candidate.supported_reasoning_levels ?? []).flatMap((level) => (typeof level.effort === "string" ? [level.effort] : [])),
+  )
+  return [...new Set(levels)]
+}
+
+export type ListEfforts = (provider: ProviderId, model?: string) => Promise<string[]>
+
+/** Reading them can take seconds, and they don't change while it's open. */
+export function createEffortCatalog(providers: Provider[]): ListEfforts {
+  const cache = new Map<string, Promise<string[]>>()
+  return (id, model) => {
+    const key = `${id}/${model ?? ""}`
+    const cached = cache.get(key)
+    if (cached) return cached
+    const list = providers.find((provider) => provider.id === id)?.listEfforts?.(model) ?? Promise.resolve([])
+    cache.set(key, list)
+    list.catch(() => cache.delete(key))
+    return list
+  }
+}
+
 export function parseOpenCodeModels(output: string): string[] {
   return output
     .split("\n")

@@ -48,6 +48,10 @@ export const opencode: Provider = {
 
   listModels: async () => parseOpenCodeModels(await readCommand(["opencode", "models"])),
 
+  // It has no command that lists a model's variants, and refuses one the model doesn't have.
+  listEfforts: async () => ["low", "medium", "high", "xhigh", "max"],
+  effortNeedsModel: true,
+
   buildEnv(request) {
     const { mode, instructions, tools, nativeSkills } = request
     const prompt = instructions ? { prompt: instructions } : {}
@@ -79,7 +83,7 @@ export const opencode: Provider = {
     }
   },
 
-  buildArgs({ prompt, mode, sessionId, model, tools }) {
+  buildArgs({ prompt, mode, sessionId, model, effort, tools }) {
     return [
       "run",
       // By default the work runs in a shared background service, which keeps
@@ -92,7 +96,7 @@ export const opencode: Provider = {
       // Always explicit because a resumed session otherwise keeps its last agent.
       "--agent",
       agentFor({ mode, tools }),
-      ...(model ? ["-m", model] : []),
+      ...(model ? ["-m", effort && !model.includes("#") ? `${model}#${effort}` : model] : []),
       ...(sessionId ? ["--session", sessionId] : []),
       "--",
       prompt,

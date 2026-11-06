@@ -1,13 +1,13 @@
 import { TextAttributes, type InputRenderable, type ScrollBoxRenderable } from "@opentui/core"
 import { useRenderer, useTerminalDimensions } from "@opentui/react"
-import { useRef, useState, useSyncExternalStore } from "react"
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { validateAgent } from "./agents/identity.ts"
 import type { Skill } from "./agents/skills.ts"
 import type { AgentStore, LoadErrors } from "./agents/store.ts"
 import type { Agent, AgentDefinition, SavableOrigin } from "./agents/types.ts"
 import type { ArchivedConversation } from "./core/archive.ts"
 import { permissionWarning, type Team } from "./core/team.ts"
-import type { ListModels } from "./providers/models.ts"
+import type { ListEfforts, ListModels } from "./providers/models.ts"
 import type { Provider } from "./providers/types.ts"
 import { AgentForm } from "./ui/agent-form.tsx"
 import { CommandMenu, MAX_MENU_LINES } from "./ui/command-menu.tsx"
@@ -21,7 +21,7 @@ import { SettingsScreen } from "./ui/settings-screen.tsx"
 import { TaskDetail } from "./ui/task-detail.tsx"
 import { TaskPanel } from "./ui/task-panel.tsx"
 import { TeamScreen } from "./ui/team-screen.tsx"
-import { ACCENT, DANGER, MUTED, PANE_STATUS_LABELS, WARNING } from "./ui/theme.ts"
+import { ACCENT, DANGER, fit, MUTED, PANE_STATUS_LABELS, WARNING } from "./ui/theme.ts"
 
 // Below this width, the conversation needs the room more than the tasks do.
 const MIN_TASK_PANEL_TERMINAL_WIDTH = 70
@@ -41,6 +41,8 @@ type Screen =
   | { kind: "settings" }
   | { kind: "help" }
   | { kind: "agents" }
+  | { kind: "skills"; skills: Skill[] }
+  | { kind: "effort"; agent: Agent; levels: string[] }
   | { kind: "resume"; conversations: ArchivedConversation[] }
   | { kind: "team" }
   | { kind: "form"; agent?: Agent }
@@ -52,6 +54,7 @@ export interface AppProps {
   store: AgentStore
   providers: Provider[]
   listModels: ListModels
+  listEfforts: ListEfforts
   listSkills: () => Skill[]
   initialErrors?: LoadErrors
   initialNotice?: string
@@ -95,7 +98,7 @@ function visibleTabs(tabs: Tab[], selected: number, width: number): Tab[] {
   return tabs.slice(first, last + 1)
 }
 
-export function App({ team, store, providers, listModels, listSkills, initialErrors = {}, initialNotice }: AppProps) {
+export function App({ team, store, providers, listModels, listEfforts, listSkills, initialErrors = {}, initialNotice }: AppProps) {
   const state = useSyncExternalStore(team.subscribe, team.getState)
   const { width, height } = useTerminalDimensions()
   const [view, setView] = useState(ORCHESTRATOR_VIEW)
@@ -109,6 +112,9 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
   const [draft, setDraft] = useState("")
   const [menuCursor, setMenuCursor] = useState(0)
   const renderer = useRenderer()
+  // Reads every skill's file, so it waits until a command is being typed.
+  const typingSlash = draft.startsWith("/")
+  const slashSkills = useMemo(() => (typingSlash ? listSkills() : []), [typingSlash, listSkills])
   // The renderable owns the text: Enter can arrive before React has seen the
   // latest keystrokes, so a controlled value could fail to clear.
   const input = useRef<InputRenderable>(null)
@@ -222,6 +228,15 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
     setCloseArmed(false)
   }
 
+  // The prompt is new whenever this screen comes back, so it may need its text put back.
+  const promptOnReturn = useRef("")
+  useEffect(() => {
+    if (screen.kind !== "main") return
+    if (promptOnReturn.current) setPrompt(promptOnReturn.current)
+    else setDraft(input.current?.value ?? "")
+    promptOnReturn.current = ""
+  }, [screen.kind])
+
   const setPrompt = (text: string) => {
     if (input.current) input.current.value = text
     setDraft(text)
@@ -247,6 +262,58 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
     agents.find((agent) => agent.id === name.toLowerCase() || agent.name.toLowerCase() === name.toLowerCase())
 
   const viewOf = (agentId: string) => (agentId === orchestratorId ? ORCHESTRATOR_VIEW : agentId)
+
+  /** Undefined in the room, which has no agent of its own. */
+  const viewedAgent = () =>
+    currentView === ROOM_VIEW
+      ? undefined
+      : agents.find((agent) => agent.id === (currentView === ORCHESTRATOR_VIEW ? orchestratorId : currentView))
+
+  const saveEffort = (agent: Agent, effort: string | undefined) => {
+    const { origin, effort: _previous, ...definition } = agent
+    try {
+      store.save({ ...definition, ...(effort ? { effort } : {}) }, origin === "builtin" ? "global" : origin)
+      reload()
+      setNotice(effort ? `${agent.name} now thinks at ${effort}. It applies from its next turn.` : `${agent.name} is back to its CLI's default.`)
+    } catch (error) {
+      setNotice(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const runEffort = async (args: string) => {
+    const agent = viewedAgent()
+    if (!agent) {
+      setNotice("Effort belongs to an agent. Tab switches to one.")
+      return
+    }
+    const provider = providers.find((candidate) => candidate.id === agent.provider)
+    if (!provider?.listEfforts) {
+      setNotice(`${provider?.label ?? agent.provider} has no thinking levels to choose from.`)
+      return
+    }
+    if (provider.effortNeedsModel && !agent.model) {
+      setNotice(`${provider.label} sets the level per model. Give ${agent.name} a model first: /agent, then e.`)
+      return
+    }
+    if (args === "default") {
+      saveEffort(agent, undefined)
+      return
+    }
+    let levels: string[]
+    try {
+      levels = await listEfforts(agent.provider, agent.model)
+    } catch {
+      setNotice(`Couldn't read ${provider.label}'s levels. Is it signed in?`)
+      return
+    }
+    if (!args) {
+      setScreen({ kind: "effort", agent, levels })
+    } else if (levels.includes(args.toLowerCase())) {
+      saveEffort(agent, args.toLowerCase())
+    } else {
+      setNotice(`"${args}" isn't one of ${agent.name}'s levels: ${levels.join(", ")}, default.`)
+    }
+  }
 
   const runCommand = (command: Command, args: string) => {
     setNotice(undefined)
@@ -277,6 +344,15 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
         else setNotice(`Nobody is called "${args}". /agent lists them.`)
         break
       }
+      case "effort":
+        void runEffort(args)
+        break
+      case "skills": {
+        const skills = listSkills()
+        if (skills.length === 0) setNotice("No skills found. The README says where they're looked for.")
+        else setScreen({ kind: "skills", skills })
+        break
+      }
       case "team":
         openFromMain({ kind: "team" })
         break
@@ -297,6 +373,23 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
         renderer.destroy()
         break
     }
+  }
+
+  const runSkill = (name: string, args: string) => {
+    if (currentView === ROOM_VIEW) {
+      setNotice("Skills run in a conversation with an agent. Tab switches to one.")
+      return
+    }
+    const agent = viewedAgent()
+    const prompt = agent && team.skillPrompt(name, args, agent.id)
+    if (!prompt) {
+      setNotice(`The skill ${name} can't be read.`)
+      return
+    }
+    const shown = `/${name}${args ? ` ${args}` : ""}`
+    setNotice(
+      currentView === ORCHESTRATOR_VIEW ? team.sendToOrchestrator(prompt, shown) : team.sendToAgent(currentView, prompt, shown),
+    )
   }
 
   useKeys((key) => {
@@ -336,7 +429,7 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
       return
     }
 
-    const menu = commandMatches(input.current?.value ?? "")
+    const menu = commandMatches(input.current?.value ?? "", slashSkills)
     if (menu.length > 0) {
       const selected = menu[Math.min(menuCursor, menu.length - 1)]
       if (key.name === "escape") {
@@ -380,21 +473,29 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
     const text = input.current.value
     setCloseArmed(false)
 
-    const offered = commandMatches(text)
+    // Read here because Enter can arrive before React has seen what was typed.
+    const skills = text.startsWith("/") ? listSkills() : []
+    const offered = commandMatches(text, skills)
     const selected = offered[Math.min(menuCursor, offered.length - 1)]
-    const slash = selected ? { command: selected, args: "" } : parseSlash(text)
+    const slash = selected
+      ? selected.skill
+        ? { skill: selected.name, args: "" }
+        : { command: selected, args: "" }
+      : parseSlash(text, skills)
     if (slash && "unknown" in slash) {
       // Kept in the prompt, in case it was a message rather than a mistyped command.
       setNotice(`/${slash.unknown} isn't a command. Type / to see them, or start with a space to send it as a message.`)
       return
     }
-    if (slash && slash.args && !slash.command.args) {
+    if (slash && "command" in slash && slash.args && !slash.command.args) {
       setNotice(`/${slash.command.name} doesn't take anything after it.`)
       return
     }
 
     setPrompt("")
-    if (slash) {
+    if (slash && "skill" in slash) {
+      runSkill(slash.skill, slash.args)
+    } else if (slash) {
       runCommand(slash.command, slash.args)
     } else if (currentView === ROOM_VIEW) {
       setNotice(team.sendToRoom(text))
@@ -444,6 +545,59 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
           const command = COMMANDS.find((candidate) => candidate.name === item.id)
           setScreen({ kind: "main" })
           if (command) runCommand(command, "")
+        }}
+        onClose={() => setScreen({ kind: "main" })}
+      />
+    )
+  }
+
+  if (screen.kind === "effort") {
+    const { agent, levels } = screen
+    const current = agent.effort ?? "default"
+    const engine = agent.model ? `${agent.provider}/${agent.model}` : agent.provider
+    const provider = providers.find((candidate) => candidate.id === agent.provider)
+    return (
+      <ListScreen
+        title={`Effort · ${agent.name} · ${engine}`}
+        labelWidth={12}
+        height={height}
+        hints={
+          provider?.effortNeedsModel
+            ? "↑/↓ move · Enter choose · Esc back · Models don't all have every level, and refuse the ones they don't"
+            : "↑/↓ move · Enter choose · Esc back"
+        }
+        initialCursor={Math.max(0, ["default", ...levels].indexOf(current))}
+        items={["default", ...levels].map((level) => ({
+          id: level,
+          label: level,
+          detail: [level === "default" ? "Whatever the CLI chooses" : "", level === current ? "current" : ""]
+            .filter(Boolean)
+            .join(" · "),
+        }))}
+        onSelect={(item) => {
+          saveEffort(agent, item.id === "default" ? undefined : item.id)
+          setScreen({ kind: "main" })
+        }}
+        onClose={() => setScreen({ kind: "main" })}
+      />
+    )
+  }
+
+  if (screen.kind === "skills") {
+    return (
+      <ListScreen
+        title={`Skills · ${screen.skills.length}`}
+        labelWidth={30}
+        height={height}
+        hints="↑/↓ move · Enter use it · Esc back · /agent, then e, gives one to an agent for good"
+        items={screen.skills.map((skill) => ({
+          id: skill.name,
+          label: skill.name,
+          detail: fit(`${skill.sources?.length ? `[${skill.sources.join(" ")}] ` : ""}${skill.description}`, Math.max(10, width - 36)),
+        }))}
+        onSelect={(item) => {
+          promptOnReturn.current = `/${item.id} `
+          setScreen({ kind: "main" })
         }}
         onClose={() => setScreen({ kind: "main" })}
       />
@@ -595,7 +749,7 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
   const hasTasks = board.tasks.length > 0
   const onOrchestrator = currentView === ORCHESTRATOR_VIEW
   const pane = panes.find((candidate) => candidate.id === currentView) ?? orchestratorPane
-  const menu = panelFocused ? [] : commandMatches(draft)
+  const menu = panelFocused ? [] : commandMatches(draft, slashSkills)
   const menuIndex = Math.min(menuCursor, Math.max(0, menu.length - 1))
   const extraLines =
     Math.min(menu.length, MAX_MENU_LINES) +

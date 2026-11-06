@@ -234,6 +234,10 @@ export function AgentForm({ agent, providerIds, lockedTools, listModels, listSki
       description: description.current?.value.trim() ?? "",
       provider,
       ...(modelValue ? { model: modelValue } : {}),
+      // Levels depend on the provider and the model, so another one starts from its default.
+      ...(agent?.effort && agent.provider === provider && agent.model === (modelValue || undefined)
+        ? { effort: agent.effort }
+        : {}),
       instructions: instructions.current?.plainText.trim() ?? "",
       mode: keepsToolDefaults ? agent.mode : modeForTools(chosenTools),
       ...(keepsToolDefaults ? {} : { tools: chosenTools }),

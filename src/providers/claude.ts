@@ -31,7 +31,10 @@ export const claude: Provider = {
   // The CLI has no command that lists models, but these aliases follow the latest of each.
   listModels: async () => ["fable", "opus", "sonnet", "haiku"],
 
-  buildArgs({ prompt, mode, sessionId, model, instructions, tools, nativeSkills }) {
+  // As `claude --help` lists them. It accepts them all with any model.
+  listEfforts: async () => ["low", "medium", "high", "xhigh", "max"],
+
+  buildArgs({ prompt, mode, sessionId, model, effort, instructions, tools, nativeSkills }) {
     return [
       "-p",
       "--output-format",
@@ -44,6 +47,7 @@ export const claude: Provider = {
       "--permission-mode",
       mode === "edit" ? "acceptEdits" : "dontAsk",
       ...(model ? ["--model", model] : []),
+      ...(effort ? ["--effort", effort] : []),
       ...(instructions ? ["--append-system-prompt", instructions] : []),
       ...toolArgs(tools, mode),
       ...(nativeSkills === false ? ["--disable-slash-commands"] : []),
