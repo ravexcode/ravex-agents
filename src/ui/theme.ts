@@ -1,5 +1,6 @@
 import type { EntryKind, PaneStatus } from "../core/agent-pool.ts"
 import type { TaskStatus } from "../core/board.ts"
+import type { ToolId } from "../providers/types.ts"
 
 export const ACCENT = "#7DCFFF"
 export const MUTED = "#8A8F98"
@@ -17,11 +18,11 @@ export const ENTRY_COLORS: Record<EntryKind, string> = {
 }
 
 export const PANE_STATUS_LABELS: Record<PaneStatus, string> = {
-  idle: "en espera",
-  running: "trabajando",
-  done: "listo",
-  failed: "falló",
-  cancelled: "cancelado",
+  idle: "idle",
+  running: "working",
+  done: "ready",
+  failed: "failed",
+  cancelled: "cancelled",
 }
 
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
@@ -47,14 +48,21 @@ export const TASK_STATUS_ICONS: Record<TaskStatus, string> = {
 }
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  proposed: "propuesta",
-  todo: "pendiente",
-  running: "en marcha",
-  review: "en revisión",
-  blocked: "bloqueada",
-  done: "hecha",
-  failed: "falló",
-  cancelled: "cancelada",
+  proposed: "proposed",
+  todo: "to do",
+  running: "running",
+  review: "in review",
+  blocked: "blocked",
+  done: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+}
+
+export const TOOL_LABELS: Record<ToolId, string> = {
+  edit: "Edit files",
+  shell: "Run commands",
+  web: "Search the web",
+  mcp: "MCP servers",
 }
 
 /** Cuts a text to one line of this width, padding it if asked. */

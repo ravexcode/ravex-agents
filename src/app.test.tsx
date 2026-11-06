@@ -4,12 +4,13 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
+import type { Skill } from "./agents/skills.ts"
 import { AgentStore, type AgentPaths } from "./agents/store.ts"
 import { App } from "./app.tsx"
 import { Team } from "./core/team.ts"
 import type { ListModels } from "./providers/models.ts"
 import type { RunTurn, TurnResult } from "./providers/runner.ts"
-import type { Provider, ProviderEvent, ProviderId, TurnRequest } from "./providers/types.ts"
+import type { Provider, ProviderEvent, ProviderId, ToolId, TurnRequest } from "./providers/types.ts"
 
 // Longer than the team's notification batching, so updates land inside act().
 const SETTLE_MS = 60
@@ -23,7 +24,17 @@ const fake = (id: ProviderId, label: string): Provider => ({
   buildArgs: () => [],
   parseLine: () => [],
 })
-const providers = [fake("claude", "Claude"), fake("codex", "Codex"), fake("opencode", "OpenCode")]
+const providers = [
+  fake("claude", "Claude"),
+  { ...fake("codex", "Codex"), lockedTools: ["shell", "mcp"] as ToolId[] },
+  fake("opencode", "OpenCode"),
+]
+const skills: Skill[] = [
+  { name: "caveman", description: "Talk less", path: "/s/caveman/SKILL.md" },
+  { name: "clean-code", description: "Write clean code", path: "/s/clean-code/SKILL.md" },
+  { name: "go-testing", description: "Test Go code", path: "/s/go-testing/SKILL.md" },
+]
+const listSkills = () => skills
 
 let dir: string
 let paths: AgentPaths
@@ -70,8 +81,9 @@ async function setup(width = 100, listModels: ListModels = defaultModels, height
       <App
         team={team}
         store={store}
-        providerIds={providers.map((provider) => provider.id)}
+        providers={providers}
         listModels={listModels}
+        listSkills={listSkills}
         initialErrors={errors}
       />,
       { width, height },
@@ -147,60 +159,77 @@ async function withApp(body: (ctx: Ctx) => Promise<void>, width?: number, listMo
   }
 }
 
-const plan = (tasks: object[]) => `Reparto el trabajo.\n\`\`\`ravex-plan\n${JSON.stringify({ tasks })}\n\`\`\``
+const plan = (tasks: object[]) => `Here is the work.\n\`\`\`ravex-plan\n${JSON.stringify({ tasks })}\n\`\`\``
 const task = (key: string, agent: string, overrides: object = {}) => ({
   key,
-  title: `Tarea ${key}`,
+  title: `Task ${key}`,
   description: `do ${key}`,
   agent,
   ...overrides,
 })
 
 async function propose(ctx: Ctx, tasks: object[]) {
-  await ctx.type("Añade rate limit")
+  await ctx.type("Add rate limiting")
   await ctx.enter()
   await ctx.reply(ctx.calls.at(-1) as Call, plan(tasks))
 }
 
-test("opens on the orchestrator's chat, with the tasks beside it", () =>
+test("opens on the orchestrator's chat, with no boxes and no empty panels", () =>
   withApp(async ({ frame }) => {
     const screen = await frame()
-    expect(screen).toContain("ORQUESTADOR")
-    expect(screen).toContain("Sala")
-    expect(screen).toContain("SOLO LECTURA")
-    expect(screen).toContain("Lead · claude")
-    expect(screen).toContain("Tareas")
-    expect(screen).toContain("Sin tareas todavía")
-    expect(screen).toContain("Al orquestador")
+    expect(screen).toContain("Orchestrator  Room  Claude  Codex  OpenCode")
+    expect(screen).toContain("READ-ONLY")
+    expect(screen).toContain("Lead · claude · idle")
+    expect(screen).toContain("Describe a goal for the orchestrator")
+    expect(screen).not.toContain("Tasks")
+    expect(screen).not.toMatch(/[┌┐└┘│─]/)
     // The orchestrator is its own tab, not also an agent.
     expect(screen.split("\n")[0]).not.toContain("Lead")
   }))
 
+test("no screen draws a box", () =>
+  withApp(async (ctx) => {
+    await propose(ctx, [task("a", "codex")])
+    expect(await ctx.frame()).not.toMatch(/[┌┐└┘│─]/)
+    await ctx.press("t", { ctrl: true })
+    await ctx.enter()
+    expect(await ctx.frame()).not.toMatch(/[┌┐└┘│─]/)
+    await ctx.escape()
+    await ctx.escape()
+    await ctx.press("TAB")
+    expect(await ctx.frame()).not.toMatch(/[┌┐└┘│─]/)
+    await ctx.press("g", { ctrl: true })
+    expect(await ctx.frame()).not.toMatch(/[┌┐└┘│─]/)
+    await ctx.type("n")
+    expect(await ctx.frame()).not.toMatch(/[┌┐└┘│─]/)
+  }))
+
 test("a goal becomes a proposal, and nothing runs until Enter approves it", () =>
   withApp(async (ctx) => {
-    await ctx.type("Añade rate limit")
+    await ctx.type("Add rate limiting")
     await ctx.enter()
     expect(ctx.calls.length).toBe(1)
-    expect(ctx.calls[0]?.request.prompt).toBe("Añade rate limit")
-    expect(await ctx.frame()).toContain("> Añade rate limit")
+    expect(ctx.calls[0]?.request.prompt).toBe("Add rate limiting")
+    expect(await ctx.frame()).toContain("> Add rate limiting")
 
     await ctx.reply(ctx.calls[0] as Call, plan([task("a", "codex"), task("b", "opencode", { dependsOn: ["a"], edits: true })]))
     let screen = await ctx.frame()
-    expect(screen).toContain("Reparto el trabajo.")
+    expect(screen).toContain("Here is the work.")
     expect(screen).not.toContain("ravex-plan")
-    expect(screen).toContain("○  1 Tarea a")
-    expect(screen).toContain("○  2 Tarea b")
-    expect(screen).toContain("← espera a 1")
-    expect(screen).toContain("Enter aprueba")
-    expect(screen).toContain("Aprobar no da permisos")
+    expect(screen).toContain("Tasks")
+    expect(screen).toContain("○  1 Task a")
+    expect(screen).toContain("○  2 Task b")
+    expect(screen).toContain("← waits for 1")
+    expect(screen).toContain("Enter approve")
+    expect(screen).toContain("Approving doesn't grant permissions")
     expect(ctx.calls.length).toBe(1)
 
     await ctx.enter()
     screen = await ctx.frame()
     expect(ctx.calls.length).toBe(2)
     expect(ctx.calls[1]?.provider).toBe("codex")
-    expect(screen).toContain("●  1 Tarea a")
-    expect(screen).toContain("Aprobar no da permisos")
+    expect(screen).toContain("●  1 Task a")
+    expect(screen).toContain("Approving doesn't grant permissions")
   }))
 
 test("Esc discards a proposal, and an empty Enter does nothing without one", () =>
@@ -211,8 +240,8 @@ test("Esc discards a proposal, and an empty Enter does nothing without one", () 
     await propose(ctx, [task("a", "codex")])
     await ctx.escape()
     const screen = await ctx.frame()
-    expect(screen).toContain("Plan descartado.")
-    expect(screen).toContain("Sin tareas todavía")
+    expect(screen).toContain("Plan discarded.")
+    expect(screen).not.toContain("Tasks")
     await ctx.enter()
     expect(ctx.calls.length).toBe(1)
   }))
@@ -220,24 +249,32 @@ test("Esc discards a proposal, and an empty Enter does nothing without one", () 
 test("typing on a proposal asks for a new plan", () =>
   withApp(async (ctx) => {
     await propose(ctx, [task("a", "codex")])
-    await ctx.type("hazlo con opencode")
+    await ctx.type("use opencode instead")
     await ctx.enter()
     expect(ctx.calls.length).toBe(2)
-    expect(ctx.calls[1]?.request.prompt).toContain("hazlo con opencode")
+    expect(ctx.calls[1]?.request.prompt).toContain("use opencode instead")
     expect(ctx.calls[1]?.request.mode).toBe("read-only")
   }))
 
 test("the input clears, even when Enter comes right after typing", () =>
   withApp(async (ctx) => {
     await ctx.press("TAB")
-    await ctx.type("hola sala")
+    await ctx.type("hello room")
     await ctx.enter()
-    await ctx.type("otra")
+    await ctx.type("another")
     await ctx.enter()
     const screen = await ctx.frame()
-    expect(screen).toContain("> hola sala")
-    expect(screen).toContain("> otra")
-    expect(screen).not.toContain("hola salaotra")
+    expect(screen).toContain("> hello room")
+    expect(screen).toContain("> another")
+    expect(screen).not.toContain("hello roomanother")
+  }))
+
+test("Ctrl+T says so when there are no tasks", () =>
+  withApp(async (ctx) => {
+    await ctx.press("t", { ctrl: true })
+    expect(await ctx.frame()).toContain("No tasks yet.")
+    await ctx.type("still typing")
+    expect(await ctx.frame()).toContain("still typing")
   }))
 
 test("the task panel moves, reassigns and opens a task", () =>
@@ -246,38 +283,38 @@ test("the task panel moves, reassigns and opens a task", () =>
 
     await ctx.press("t", { ctrl: true })
     let screen = await ctx.frame()
-    expect(screen).toContain("▸○  1 Tarea a")
-    expect(screen).toContain("r reasignar")
+    expect(screen).toContain("▸○  1 Task a")
+    expect(screen).toContain("r reassign")
 
     await ctx.arrow("down")
     screen = await ctx.frame()
-    expect(screen).toContain("▸○  2 Tarea b")
+    expect(screen).toContain("▸○  2 Task b")
 
     // Keys here belong to the panel, not to the input.
     await ctx.type("r")
     expect(ctx.team.getState().board.tasks[1]?.assignee).toBe("claude")
-    expect(await ctx.frame()).not.toContain("> r")
+    expect(await ctx.frame()).not.toContain("› r")
 
     await ctx.arrow("up")
     await ctx.enter()
     screen = await ctx.frame()
-    expect(screen).toContain("Tarea 1 · propuesta")
+    expect(screen).toContain("Task 1 · proposed")
     expect(screen).toContain("do a")
-    expect(screen).toContain("Asignada a Codex · edita archivos")
+    expect(screen).toContain("Assigned to Codex · edits files")
     expect(ctx.calls.length).toBe(1)
 
-    await ctx.type("mira los tests")
+    await ctx.type("mind the tests")
     await ctx.enter()
     screen = await ctx.frame()
-    expect(screen).toContain("Tú: mira los tests")
-    expect(ctx.team.getState().board.tasks[0]?.comments).toEqual([{ author: "you", text: "mira los tests" }])
+    expect(screen).toContain("You: mind the tests")
+    expect(ctx.team.getState().board.tasks[0]?.comments).toEqual([{ author: "you", text: "mind the tests" }])
 
     await ctx.escape()
     screen = await ctx.frame()
-    expect(screen).toContain("Tarea a")
-    expect(screen).toContain("r reasignar")
+    expect(screen).toContain("Task a")
+    expect(screen).toContain("r reassign")
     await ctx.escape()
-    expect(await ctx.frame()).toContain("Enter aprueba")
+    expect(await ctx.frame()).toContain("Enter approve")
   }))
 
 test("a task's detail shows its result and the agent's conversation", () =>
@@ -289,15 +326,15 @@ test("a task's detail shows its result and the agent's conversation", () =>
       work.emit({ type: "tool", name: "read", detail: "src/x.ts" })
       await Bun.sleep(SETTLE_MS)
     })
-    await ctx.reply(work, "Encontré dos fallos")
+    await ctx.reply(work, "Found two bugs")
 
     await ctx.press("t", { ctrl: true })
     await ctx.enter()
     const screen = await ctx.frame()
-    expect(screen).toContain("Tarea 1 · hecha")
-    expect(screen).toContain("Resultado")
-    expect(screen).toContain("Encontré dos fallos")
-    expect(screen).toContain("Conversación del agente")
+    expect(screen).toContain("Task 1 · done")
+    expect(screen).toContain("Result")
+    expect(screen).toContain("Found two bugs")
+    expect(screen).toContain("Agent conversation")
     expect(screen).toContain("read: src/x.ts")
   }))
 
@@ -305,64 +342,64 @@ test("Tab goes through the orchestrator, the room and each agent", () =>
   withApp(async (ctx) => {
     await ctx.press("TAB")
     let screen = await ctx.frame()
-    expect(screen.split("\n")[0]).toContain("SALA")
-    expect(screen).toContain("A la sala")
+    expect(screen).toContain("Team room")
+    expect(screen).toContain("Message the room")
 
     await ctx.press("TAB")
     screen = await ctx.frame()
-    expect(screen.split("\n")[0]).toContain("CLAUDE")
-    expect(screen).toContain("A Claude")
+    expect(screen).toContain("Claude · claude · idle")
+    expect(screen).toContain("Message Claude")
 
     await ctx.press("TAB", { shift: true })
     await ctx.press("TAB", { shift: true })
-    expect((await ctx.frame()).split("\n")[0]).toContain("ORQUESTADOR")
+    expect(await ctx.frame()).toContain("Describe a goal")
 
     await ctx.press("TAB", { shift: true })
-    expect((await ctx.frame()).split("\n")[0]).toContain("OPENCODE")
+    expect(await ctx.frame()).toContain("Message OpenCode")
   }))
 
 test("in the room, only a mention spends anything", () =>
   withApp(async (ctx) => {
     await ctx.press("TAB")
-    await ctx.type("hola")
+    await ctx.type("hello")
     await ctx.enter()
     let screen = await ctx.frame()
-    expect(screen).toContain("Nadie responde sin una mención")
+    expect(screen).toContain("Nobody replies without a mention")
     expect(ctx.calls.length).toBe(0)
 
-    await ctx.type("@codex qué opinas")
+    await ctx.type("@codex what do you think")
     await ctx.enter()
     expect(ctx.calls.length).toBe(1)
     expect(ctx.calls[0]?.request.mode).toBe("read-only")
-    expect(await ctx.frame()).toContain("Codex está respondiendo…")
+    expect(await ctx.frame()).toContain("Codex is replying…")
 
-    await ctx.reply(ctx.calls[0] as Call, "Me parece bien")
+    await ctx.reply(ctx.calls[0] as Call, "Sounds good")
     screen = await ctx.frame()
-    expect(screen).toContain("Codex: Me parece bien")
-    expect(screen).not.toContain("está respondiendo")
+    expect(screen).toContain("Codex: Sounds good")
+    expect(screen).not.toContain("is replying")
   }))
 
 test("a room turn of the orchestrator stays out of its chat", () =>
   withApp(async (ctx) => {
     await ctx.press("TAB")
-    await ctx.type("@lead qué tal")
+    await ctx.type("@lead how is it going")
     await ctx.enter()
-    await ctx.reply(ctx.calls[0] as Call, "Todo bien")
-    expect(await ctx.frame()).toContain("Lead: Todo bien")
+    await ctx.reply(ctx.calls[0] as Call, "All good")
+    expect(await ctx.frame()).toContain("Lead: All good")
     await ctx.press("TAB", { shift: true })
     const screen = await ctx.frame()
-    expect(screen).not.toContain("Todo bien")
-    expect(screen).not.toContain("Mención en la sala")
+    expect(screen).not.toContain("All good")
+    expect(screen).not.toContain("Mentioned in the room")
   }))
 
 test("a direct message goes to that agent, and Esc cancels it", () =>
   withApp(async (ctx) => {
     await ctx.press("TAB")
     await ctx.press("TAB")
-    await ctx.type("hola claude")
+    await ctx.type("hi claude")
     await ctx.enter()
-    expect(ctx.calls[0]?.request.prompt).toBe("hola claude")
-    expect((await ctx.frame()).split("\n")[0]).toContain("● CLAUDE")
+    expect(ctx.calls[0]?.request.prompt).toBe("hi claude")
+    expect((await ctx.frame()).split("\n")[0]).toContain("● Claude")
     await ctx.escape()
     expect(ctx.calls[0]?.signal.aborted).toBe(true)
   }))
@@ -374,131 +411,254 @@ test("Esc on running work stops it, then a second Esc on the pause closes the go
     await ctx.escape()
     expect(ctx.calls.at(-1)?.signal.aborted).toBe(true)
     let screen = await ctx.frame()
-    expect(screen).toContain("Trabajo detenido")
-    expect(screen).toContain("–  1 Tarea a")
+    expect(screen).toContain("Work stopped")
+    expect(screen).toContain("–  1 Task a")
 
     await ctx.escape()
     screen = await ctx.frame()
-    expect(screen).toContain("Pulsa Esc otra vez")
+    expect(screen).toContain("Press Esc again")
     expect(ctx.team.getState().board.phase).toBe("paused")
 
     await ctx.escape()
     expect(ctx.team.getState().board.phase).toBe("idle")
     screen = await ctx.frame()
-    expect(screen).toContain("–  2 Tarea b")
-    expect(screen).not.toContain("Pulsa Esc otra vez")
+    expect(screen).toContain("–  2 Task b")
+    expect(screen).not.toContain("Press Esc again")
   }))
 
 test("Ctrl+E changes the session's mode", () =>
   withApp(async (ctx) => {
     await ctx.press("e", { ctrl: true })
-    expect(await ctx.frame()).toContain("EDICIÓN")
+    expect((await ctx.frame()).split("\n")[0]).toContain("EDIT")
     await ctx.press("e", { ctrl: true })
-    expect(await ctx.frame()).toContain("SOLO LECTURA")
+    expect(await ctx.frame()).toContain("READ-ONLY")
+  }))
+
+test("PageUp scrolls a long conversation, and it stays on screen without a scrollbar", () =>
+  withApp(async (ctx) => {
+    await ctx.press("TAB")
+    await ctx.press("TAB")
+    await ctx.type("hi")
+    await ctx.enter()
+    const lines = Array.from({ length: 60 }, (_, index) => `line-${index}`).join("\n")
+    await ctx.reply(ctx.calls[0] as Call, lines)
+    let screen = await ctx.frame()
+    expect(screen).toContain("line-59")
+    expect(screen).not.toContain("█")
+
+    await ctx.press("\x1b[5~")
+    await ctx.press("\x1b[5~")
+    screen = await ctx.frame()
+    expect(screen).not.toContain("line-59")
+    expect(screen).toContain("Message Claude")
   }))
 
 test("Ctrl+G shows the team and marks the orchestrator", () =>
   withApp(async (ctx) => {
     await ctx.press("g", { ctrl: true })
     const screen = await ctx.frame()
-    expect(screen).toContain("Equipo")
+    expect(screen).toContain("Team")
     expect(screen).toContain("★ Lead")
     expect(screen).toContain("Codex")
-    expect(screen).toContain("opencode")
+    expect(screen).toContain("Tools")
+    expect(screen).toContain("Skills")
     await ctx.escape()
-    expect(await ctx.frame()).toContain("Al orquestador")
+    expect(await ctx.frame()).toContain("Describe a goal")
   }))
 
-test("creates an agent choosing a provider and a model from the list", () =>
+/** Opens the form for a new agent and leaves the focus on the given field. */
+async function newAgent(ctx: Ctx, name: string, tabs = 1) {
+  await ctx.press("g", { ctrl: true })
+  await ctx.type("n")
+  await ctx.press("TAB")
+  await ctx.type(name)
+  for (let count = 1; count < tabs; count++) await ctx.press("TAB")
+}
+const MODEL_TABS = 4
+const SKILLS_TABS = 5
+const TOOLS_TABS = 6
+const savedAgents = () => savedFile().agents
+
+test("creates an agent with its name, provider, model, skills and tools", () =>
   withApp(async (ctx) => {
     await ctx.press("g", { ctrl: true })
     await ctx.type("n")
-    expect(await ctx.frame()).toContain("Nuevo agente")
+    expect(await ctx.frame()).toContain("New agent")
 
     await ctx.press("TAB")
     await ctx.type("Diseño UX")
     await ctx.press("TAB")
-    await ctx.type("Diseña pantallas")
+    await ctx.type("Designs screens")
     await ctx.press("TAB")
     await ctx.arrow("right")
-    expect(await ctx.frame()).toContain("◂ codex ▸")
+    await ctx.arrow("right")
+    expect(await ctx.frame()).toContain("◂ opencode ▸")
     await ctx.press("TAB")
 
     let screen = await ctx.frame()
-    expect(screen).toContain("Por defecto de la CLI")
+    expect(screen).toContain("CLI default")
     expect(screen).toContain("openai/gpt-5.5")
 
     await ctx.type("glm")
     screen = await ctx.frame()
     expect(screen).toContain("zai/glm-5")
     expect(screen).not.toContain("openai/gpt-5.5")
-    expect(screen).not.toContain("Por defecto de la CLI")
-
+    expect(screen).not.toContain("CLI default")
     await ctx.enter()
+
+    // The form moved on to skills.
+    screen = await ctx.frame()
+    expect(screen).toContain("Search 3 skills")
+    expect(screen).toContain("[ ] caveman")
+    await ctx.type("clean")
+    screen = await ctx.frame()
+    expect(screen).toContain("[ ] clean-code")
+    expect(screen).not.toContain("caveman")
+    await ctx.enter()
+    expect(await ctx.frame()).toContain("[x] clean-code")
+
+    await ctx.press("TAB")
+    screen = await ctx.frame()
+    expect(screen).toContain("Reading the project is always allowed")
+    expect(screen).toContain("▸ [ ] Edit files")
+    await ctx.press(" ")
+    await ctx.arrow("down")
+    await ctx.arrow("down")
+    await ctx.press(" ")
+    screen = await ctx.frame()
+    expect(screen).toContain("[x] Edit files")
+    expect(screen).toContain("▸ [x] Search the web")
+
     await ctx.press("s", { ctrl: true })
-    expect(savedFile().agents).toEqual([
+    expect(savedAgents()).toEqual([
       {
         id: "diseno-ux",
         name: "Diseño UX",
-        description: "Diseña pantallas",
-        provider: "codex",
+        description: "Designs screens",
+        provider: "opencode",
         model: "zai/glm-5",
         instructions: "",
-        mode: "read-only",
+        mode: "edit",
+        tools: ["edit", "web"],
+        skills: ["clean-code"],
       },
     ])
 
     screen = await ctx.frame()
-    expect(screen).toContain("Equipo")
-    expect(screen).toContain("codex/zai/glm-5")
+    expect(screen).toContain("Team")
+    expect(screen).toContain("opencode/zai/glm-5")
+    expect(screen).toContain("edit web")
     await ctx.escape()
     expect((await ctx.frame()).split("\n")[0]).toContain("Diseño UX")
   }))
 
-test("the model list moves with the arrows, and accepts a name that isn't listed", () =>
+test("a new agent can't change anything until given the tools", () =>
+  withApp(async (ctx) => {
+    await newAgent(ctx, "Reader")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents()[0]).toMatchObject({ mode: "read-only", tools: [], skills: [] })
+  }))
+
+test("running commands alone also counts as being able to change things", () =>
+  withApp(async (ctx) => {
+    await newAgent(ctx, "Runner", TOOLS_TABS)
+    await ctx.arrow("down")
+    await ctx.press(" ")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents()[0]).toMatchObject({ mode: "edit", tools: ["shell"] })
+  }))
+
+test("a template brings its tools", () =>
   withApp(async (ctx) => {
     await ctx.press("g", { ctrl: true })
     await ctx.type("n")
-    await ctx.press("TAB")
-    await ctx.type("Alpha")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
+    await ctx.arrow("right")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents()[0]).toMatchObject({ name: "Security", tools: ["web"], mode: "read-only" })
+  }))
 
+test("shows tools that a CLI can't turn off, and doesn't save them", () =>
+  withApp(async (ctx) => {
+    await newAgent(ctx, "Codexer", 3)
+    await ctx.arrow("right")
+    await ctx.press("TAB")
+    await ctx.press("TAB")
+    await ctx.press("TAB")
+    const screen = await ctx.frame()
+    expect(screen).toContain("[x] Run commands (always on in codex")
+    expect(screen).toContain("[x] MCP servers (always on in codex")
+    expect(screen).toContain("▸ [ ] Edit files")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents()[0]).toMatchObject({ provider: "codex", tools: [], mode: "read-only" })
+  }))
+
+test("skills are unset until touched, and can be unchecked", () =>
+  withApp(async (ctx) => {
+    await newAgent(ctx, "Skilled", SKILLS_TABS)
+    await ctx.enter()
+    await ctx.arrow("down")
+    await ctx.enter()
+    await ctx.arrow("up")
+    await ctx.enter()
+    await ctx.press("TAB")
+    expect(await ctx.frame()).toContain("clean-code")
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents()[0].skills).toEqual(["clean-code"])
+  }))
+
+test("keeps a skill that no longer exists visible, so it can be removed", async () => {
+  mkdirSync(dirname(paths.global), { recursive: true })
+  writeFileSync(
+    paths.global,
+    JSON.stringify({
+      agents: [{ id: "old", name: "Old", description: "", provider: "claude", instructions: "", mode: "read-only", tools: [], skills: ["ghost"] }],
+    }),
+  )
+  await withApp(async (ctx) => {
+    await ctx.press("g", { ctrl: true })
+    await ctx.arrow("down")
+    await ctx.arrow("down")
+    await ctx.arrow("down")
+    await ctx.arrow("down")
+    await ctx.type("e")
+    expect(await ctx.frame()).toContain("Edit Old")
+    for (let count = 0; count < 4; count++) await ctx.press("TAB")
+    expect(await ctx.frame()).toContain("[x] ghost · not found")
+    await ctx.enter()
+    await ctx.press("s", { ctrl: true })
+    expect(savedAgents()[0].skills).toEqual([])
+  })
+})
+
+test("the model list moves with the arrows, and accepts a name that isn't listed", () =>
+  withApp(async (ctx) => {
+    await newAgent(ctx, "Alpha", MODEL_TABS)
     await ctx.arrow("down")
     await ctx.arrow("down")
     expect(await ctx.frame()).toContain("▸ opus")
     await ctx.enter()
     await ctx.press("s", { ctrl: true })
-    expect(savedFile().agents[0].model).toBe("opus")
+    expect(savedAgents()[0].model).toBe("opus")
 
     await ctx.type("n")
     await ctx.press("TAB")
     await ctx.type("Beta")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
+    for (let count = 1; count < MODEL_TABS; count++) await ctx.press("TAB")
     await ctx.type("claude-custom-9")
-    expect(await ctx.frame()).toContain('Usar "claude-custom-9"')
+    expect(await ctx.frame()).toContain('Use "claude-custom-9"')
     await ctx.enter()
     await ctx.press("s", { ctrl: true })
-    expect(savedFile().agents[1].model).toBe("claude-custom-9")
+    expect(savedAgents()[1].model).toBe("claude-custom-9")
   }))
 
 test("if the model list fails, says so and still takes a typed name", () =>
   withApp(
     async (ctx) => {
-      await ctx.press("g", { ctrl: true })
-      await ctx.type("n")
-      await ctx.press("TAB")
-      await ctx.type("Gamma")
-      await ctx.press("TAB")
-      await ctx.press("TAB")
-      await ctx.press("TAB")
-      expect(await ctx.frame()).toContain("No se pudo leer la lista de modelos")
+      await newAgent(ctx, "Gamma", MODEL_TABS)
+      expect(await ctx.frame()).toContain("Couldn't read the model list")
       await ctx.type("a-model")
       await ctx.press("s", { ctrl: true })
-      expect(savedFile().agents[0].model).toBe("a-model")
+      expect(savedAgents()[0].model).toBe("a-model")
     },
     100,
     async () => {
@@ -508,59 +668,54 @@ test("if the model list fails, says so and still takes a typed name", () =>
 
 test("changing the provider clears a model that belongs to another", () =>
   withApp(async (ctx) => {
-    await ctx.press("g", { ctrl: true })
-    await ctx.type("n")
-    await ctx.press("TAB")
-    await ctx.type("Delta")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
+    await newAgent(ctx, "Delta", MODEL_TABS)
     await ctx.type("sonnet")
     await ctx.press("TAB", { shift: true })
     await ctx.arrow("right")
     await ctx.press("s", { ctrl: true })
-    expect(savedFile().agents[0]).not.toHaveProperty("model")
-    expect(savedFile().agents[0].provider).toBe("codex")
+    expect(savedAgents()[0]).not.toHaveProperty("model")
+    expect(savedAgents()[0].provider).toBe("codex")
   }))
 
-test("the list opens on the current model when editing, and a built-in can be changed and restored", () =>
+test("editing a built-in's model keeps its defaults, and deleting the copy restores it", () =>
   withApp(async (ctx) => {
     await ctx.press("g", { ctrl: true })
     await ctx.arrow("down")
     await ctx.type("e")
-    expect(await ctx.frame()).toContain("Editar Claude")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
+    expect(await ctx.frame()).toContain("Edit Claude")
+    for (let count = 0; count < 3; count++) await ctx.press("TAB")
     await ctx.type("haiku")
     await ctx.enter()
+    await ctx.press("TAB")
+    let screen = await ctx.frame()
+    expect(screen).toContain("What its CLI finds")
     await ctx.press("s", { ctrl: true })
-    expect(savedFile().agents[0]).toMatchObject({ id: "claude", model: "haiku" })
+    expect(savedAgents()[0]).toMatchObject({ id: "claude", model: "haiku", mode: "edit" })
+    expect(savedAgents()[0]).not.toHaveProperty("tools")
+    expect(savedAgents()[0]).not.toHaveProperty("skills")
     expect(await ctx.frame()).toContain("claude/haiku")
 
     await ctx.type("e")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
-    await ctx.press("TAB")
-    const screen = await ctx.frame()
+    for (let count = 0; count < 3; count++) await ctx.press("TAB")
+    screen = await ctx.frame()
     expect(screen).toContain("▸ haiku")
     expect(screen).toContain("fable")
     await ctx.escape()
 
     await ctx.type("d")
-    expect(await ctx.frame()).toContain("¿Restaurar Claude")
+    expect(await ctx.frame()).toContain("Restore Claude")
     await ctx.type("y")
     const restored = await ctx.frame()
-    expect(restored).toContain("ha vuelto a su versión original")
+    expect(restored).toContain("back to its original version")
     expect(restored).not.toContain("claude/haiku")
-    expect(savedFile().agents).toEqual([])
+    expect(savedAgents()).toEqual([])
   }))
 
 test("a built-in that wasn't changed can't be deleted", () =>
   withApp(async (ctx) => {
     await ctx.press("g", { ctrl: true })
     await ctx.type("d")
-    expect(await ctx.frame()).toContain("es un agente base")
+    expect(await ctx.frame()).toContain("is built in")
   }))
 
 test("o makes an agent the orchestrator, which changes the tabs and is remembered", () =>
@@ -571,7 +726,7 @@ test("o makes an agent the orchestrator, which changes the tabs and is remembere
     await ctx.type("o")
     let screen = await ctx.frame()
     expect(screen).toContain("★ Codex")
-    expect(screen).toContain("Codex es ahora el orquestador.")
+    expect(screen).toContain("Codex is now the orchestrator.")
     expect(savedFile().orchestrator).toBe("codex")
 
     await ctx.escape()
@@ -580,7 +735,7 @@ test("o makes an agent the orchestrator, which changes the tabs and is remembere
     expect(screen.split("\n")[0]).toContain("Lead")
     expect(screen.split("\n")[0]).not.toContain("Codex")
 
-    await ctx.type("hola")
+    await ctx.type("hi")
     await ctx.enter()
     expect(ctx.calls[0]?.provider).toBe("codex")
   }))
@@ -595,53 +750,48 @@ test("won't delete or edit an agent while it works", () =>
     await ctx.escape()
     await ctx.press("TAB")
     await ctx.press("TAB")
-    await ctx.type("hola")
+    await ctx.type("hi")
     await ctx.enter()
     expect(ctx.calls.length).toBe(1)
 
     await ctx.press("g", { ctrl: true })
     await ctx.type("d")
-    expect(await ctx.frame()).toContain("está trabajando")
+    expect(await ctx.frame()).toContain("is working")
     await ctx.type("e")
     const screen = await ctx.frame()
-    expect(screen).toContain("está trabajando")
-    expect(screen).not.toContain("Editar Claude")
+    expect(screen).toContain("is working")
+    expect(screen).not.toContain("Edit Claude")
   }))
 
 test("a file that can't be loaded is reported, and saving doesn't overwrite it", async () => {
   mkdirSync(dirname(paths.global), { recursive: true })
   writeFileSync(paths.global, "{ oops")
   await withApp(async (ctx) => {
-    expect(await ctx.frame()).toContain("guardar está bloqueado")
-    await ctx.press("g", { ctrl: true })
-    await ctx.type("n")
-    await ctx.press("TAB")
-    await ctx.type("Epsilon")
+    expect(await ctx.frame()).toContain("saving is blocked")
+    await newAgent(ctx, "Epsilon")
     await ctx.press("s", { ctrl: true })
-    expect(await ctx.frame()).toContain("No se pudo guardar")
+    expect(await ctx.frame()).toContain("Couldn't save")
     expect(readFileSync(paths.global, "utf8")).toBe("{ oops")
   }, 140)
 })
 
 test("rejects a repeated name in the form", () =>
   withApp(async (ctx) => {
-    await ctx.press("g", { ctrl: true })
-    await ctx.type("n")
-    await ctx.press("TAB")
-    await ctx.type("Codex")
+    await newAgent(ctx, "Codex")
     await ctx.press("s", { ctrl: true })
-    expect(await ctx.frame()).toContain("Ya existe un agente")
+    expect(await ctx.frame()).toContain("already exists")
   }))
 
 test("in a narrow terminal, the panel only shows when asked for", () =>
   withApp(
     async (ctx) => {
+      await propose(ctx, [task("a", "codex")])
       let screen = await ctx.frame()
-      expect(screen).not.toContain("Tareas")
+      expect(screen).not.toContain("Tasks")
       expect(screen).toContain("Lead")
       await ctx.press("t", { ctrl: true })
       screen = await ctx.frame()
-      expect(screen).toContain("Tareas")
+      expect(screen).toContain("Tasks")
       expect(screen).not.toContain("Lead · claude")
     },
     60,
@@ -651,20 +801,22 @@ test("with many agents, the selected tab stays visible", () =>
   withApp(
     async (ctx) => {
       await ctx.press("TAB", { shift: true })
-      expect((await ctx.frame()).split("\n")[0]).toContain("OPENCODE")
+      const first = (await ctx.frame()).split("\n")[0]
+      expect(first).toContain("OpenCode")
+      expect(first).not.toContain("Orchestrator")
     },
     30,
   ))
 
-test("a short terminal keeps the selected task and the input on screen", () =>
+test("a short terminal keeps the selected task, the form list and the prompt on screen", () =>
   withApp(
     async (ctx) => {
       await propose(ctx, Array.from({ length: 8 }, (_, index) => task(`k${index}`, "codex")))
       await ctx.press("t", { ctrl: true })
       for (let step = 0; step < 7; step++) await ctx.arrow("down")
       const screen = await ctx.frame()
-      expect(screen).toContain("▸○  8 Tarea k7")
-      expect(screen).toContain("Al orquestador")
+      expect(screen).toContain("▸○  8 Task k7")
+      expect(screen).toContain("Describe a goal")
     },
     100,
     defaultModels,

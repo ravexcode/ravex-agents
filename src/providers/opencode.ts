@@ -1,12 +1,44 @@
 import { parseOpenCodeModels, readCommand } from "./models.ts"
 import { parseJsonObject, summarizeInput } from "./parse.ts"
-import type { PermissionMode, Provider } from "./types.ts"
+import type { Provider, TurnRequest } from "./types.ts"
 
 const READ_ONLY_AGENT = "ravex-read-only"
 const EDIT_AGENT = "build"
+const CUSTOM_AGENT = "ravex-custom"
 
-function agentFor(mode: PermissionMode): string {
+const READ_ONLY_PERMISSIONS = {
+  "*": "deny",
+  read: { "*": "allow", "*.env": "deny", "*.env.*": "deny" },
+  glob: "allow",
+  grep: "allow",
+  list: "allow",
+}
+
+function agentFor({ mode, tools }: Pick<TurnRequest, "mode" | "tools">): string {
+  if (tools) return CUSTOM_AGENT
   return mode === "read-only" ? READ_ONLY_AGENT : EDIT_AGENT
+}
+
+/** Everything not listed stays denied, including subagents. */
+function customPermissions({ mode, tools = [], nativeSkills }: TurnRequest): Record<string, unknown> {
+  const canChange = mode === "edit"
+  return {
+    ...READ_ONLY_PERMISSIONS,
+    ...(tools.includes("mcp")
+      ? {
+          // MCP tools are named <server>_<tool>, which also matches some of OpenCode's own.
+          "*_*": "allow",
+          "opencode_*": "deny",
+          "experimental_*": "deny",
+          external_directory: "deny",
+        }
+      : {}),
+    ...(canChange && tools.includes("edit") ? { edit: "allow" } : {}),
+    // Its shell has no read-only form, so it needs edit mode.
+    ...(canChange && tools.includes("shell") ? { bash: "allow" } : {}),
+    ...(tools.includes("web") ? { webfetch: "allow", websearch: "allow" } : {}),
+    ...(nativeSkills === false ? {} : { skill: "allow" }),
+  }
 }
 
 export const opencode: Provider = {
@@ -16,8 +48,10 @@ export const opencode: Provider = {
 
   listModels: async () => parseOpenCodeModels(await readCommand(["opencode", "models"])),
 
-  buildEnv({ mode, instructions }) {
+  buildEnv(request) {
+    const { mode, instructions, tools, nativeSkills } = request
     const prompt = instructions ? { prompt: instructions } : {}
+    const noSkills = nativeSkills === false ? { permission: { skill: "deny" } } : {}
     return {
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         agent: {
@@ -26,22 +60,26 @@ export const opencode: Provider = {
           [READ_ONLY_AGENT]: {
             mode: "primary",
             description: "Read-only agent used by Ravex Agents",
-            permission: {
-              "*": "deny",
-              read: { "*": "allow", "*.env": "deny", "*.env.*": "deny" },
-              glob: "allow",
-              grep: "allow",
-              list: "allow",
-            },
+            permission: READ_ONLY_PERMISSIONS,
             ...(mode === "read-only" ? prompt : {}),
           },
-          ...(mode === "edit" ? { [EDIT_AGENT]: prompt } : {}),
+          ...(mode === "edit" ? { [EDIT_AGENT]: { ...prompt, ...noSkills } } : {}),
+          ...(tools
+            ? {
+                [CUSTOM_AGENT]: {
+                  mode: "primary",
+                  description: "Agent with the tools chosen in Ravex Agents",
+                  permission: customPermissions(request),
+                  ...prompt,
+                },
+              }
+            : {}),
         },
       }),
     }
   },
 
-  buildArgs({ prompt, mode, sessionId, model }) {
+  buildArgs({ prompt, mode, sessionId, model, tools }) {
     return [
       "run",
       // By default the work runs in a shared background service, which keeps
@@ -52,7 +90,7 @@ export const opencode: Provider = {
       "json",
       // Always explicit because a resumed session otherwise keeps its last agent.
       "--agent",
-      agentFor(mode),
+      agentFor({ mode, tools }),
       ...(model ? ["-m", model] : []),
       ...(sessionId ? ["--session", sessionId] : []),
       "--",

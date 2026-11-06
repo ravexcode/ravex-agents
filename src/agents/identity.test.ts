@@ -13,10 +13,10 @@ describe("validateAgent", () => {
   const agent = (id: string) => ({ id, name: id })
 
   test("requires a usable, unique, unreserved name", () => {
-    expect(validateAgent(agent(""), [])).toContain("obligatorio")
-    expect(validateAgent({ id: "", name: "!!!" }, [])).toContain("una letra")
-    expect(validateAgent(agent("room"), [])).toContain("reservado")
-    expect(validateAgent(agent("a"), [agent("a")])).toContain("Ya existe")
+    expect(validateAgent(agent(""), [])).toContain("required")
+    expect(validateAgent({ id: "", name: "!!!" }, [])).toContain("letter or number")
+    expect(validateAgent(agent("room"), [])).toContain("reserved")
+    expect(validateAgent(agent("a"), [agent("a")])).toContain("already exists")
   })
 
   test("lets an agent keep its own ID when edited", () => {

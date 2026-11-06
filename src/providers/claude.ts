@@ -1,5 +1,27 @@
 import { parseJsonObject, summarizeInput } from "./parse.ts"
-import type { Provider, ProviderEvent } from "./types.ts"
+import type { PermissionMode, Provider, ProviderEvent, ToolId } from "./types.ts"
+
+/** Without Skill or Task, an agent also can't load other skills or start subagents. */
+function toolArgs(tools: ToolId[] | undefined, mode: PermissionMode): string[] {
+  if (!tools) return []
+  const names = [
+    "Read",
+    "Glob",
+    "Grep",
+    ...(tools.includes("edit") && mode === "edit" ? ["Edit", "Write", "NotebookEdit"] : []),
+    ...(tools.includes("shell") ? ["Bash"] : []),
+    ...(tools.includes("web") ? ["WebFetch", "WebSearch"] : []),
+  ]
+  return [
+    "--tools",
+    names.join(","),
+    // Otherwise any command that isn't a simple file operation is refused. In
+    // read-only mode, leaving this out keeps only commands that change nothing.
+    ...(tools.includes("shell") && mode === "edit" ? ["--allowedTools", "Bash"] : []),
+    // With no config given, this leaves no MCP servers at all.
+    ...(tools.includes("mcp") ? [] : ["--strict-mcp-config"]),
+  ]
+}
 
 export const claude: Provider = {
   id: "claude",
@@ -9,7 +31,7 @@ export const claude: Provider = {
   // The CLI has no command that lists models, but these aliases follow the latest of each.
   listModels: async () => ["fable", "opus", "sonnet", "haiku"],
 
-  buildArgs({ prompt, mode, sessionId, model, instructions }) {
+  buildArgs({ prompt, mode, sessionId, model, instructions, tools, nativeSkills }) {
     return [
       "-p",
       "--output-format",
@@ -20,6 +42,8 @@ export const claude: Provider = {
       mode === "edit" ? "acceptEdits" : "dontAsk",
       ...(model ? ["--model", model] : []),
       ...(instructions ? ["--append-system-prompt", instructions] : []),
+      ...toolArgs(tools, mode),
+      ...(nativeSkills === false ? ["--disable-slash-commands"] : []),
       ...(sessionId ? ["--resume", sessionId] : []),
       "--",
       prompt,

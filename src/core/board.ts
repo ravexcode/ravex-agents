@@ -1,4 +1,4 @@
-import { parseTrailingBlock, truncateResult } from "./blocks.ts"
+import { parseBlock, truncateResult } from "./blocks.ts"
 
 export const MAX_TASKS_PER_GOAL = 12
 export const MAX_REPLANS = 3
@@ -50,6 +50,8 @@ export interface ParsedPlan {
 
 interface PlanContext {
   workers: Set<string>
+  /** Team members whose tools let them change files. */
+  editors?: Set<string>
   board: Board
 }
 
@@ -69,8 +71,8 @@ function hasCycle(tasks: Task[]): boolean {
 }
 
 /** Returns null when the message doesn't contain a plan. */
-export function parsePlan(message: string, { workers, board }: PlanContext): ParsedPlan | null {
-  const block = parseTrailingBlock(message, "ravex-plan")
+export function parsePlan(message: string, { workers, editors, board }: PlanContext): ParsedPlan | null {
+  const block = parseBlock(message, "ravex-plan")
   if (!block) return null
 
   const invalid = (error: string): ParsedPlan => ({ text: block.text, tasks: [], retry: [], error })
@@ -114,6 +116,9 @@ export function parsePlan(message: string, { workers, board }: PlanContext): Par
     }
     if (typeof item.agent !== "string" || !workers.has(item.agent)) {
       return invalid(`${label} is assigned to "${String(item.agent)}", who isn't an available team member.`)
+    }
+    if (item.edits === true && editors && !editors.has(item.agent)) {
+      return invalid(`${label} changes files, but "${item.agent}" has no tools to do that.`)
     }
     let reviewer: string | undefined
     if (item.reviewer !== undefined && item.reviewer !== null) {
@@ -207,7 +212,7 @@ export interface WorkerReport {
 
 /** A worker that doesn't send a block is treated as finished, with its message as the result. */
 export function parseWorkerReport(message: string): WorkerReport {
-  const block = parseTrailingBlock(message, "ravex-task")
+  const block = parseBlock(message, "ravex-task")
   if (!block) return { status: "done", text: message, summary: message }
 
   const data = block.data as Record<string, unknown> | null | undefined
@@ -235,7 +240,7 @@ export interface ReviewVerdict {
 
 /** Unlike a worker's report, a review without a verdict isn't assumed to be an approval. */
 export function parseReview(message: string): ReviewVerdict {
-  const block = parseTrailingBlock(message, "ravex-review")
+  const block = parseBlock(message, "ravex-review")
   if (!block) return { verdict: "none", text: message, comment: message }
 
   const data = block.data as { verdict?: unknown; comment?: unknown } | null | undefined
@@ -248,11 +253,19 @@ export interface RosterEntry {
   id: string
   description: string
   engine: string
+  /** What it can use, such as "read, edit, web". */
+  tools: string
+  skills: string[]
 }
 
 export function buildOrchestratorInstructions(own: string, roster: RosterEntry[]): string {
   const team = roster.length
-    ? roster.map((member) => `- ${member.id}: ${member.description || "General purpose"} (${member.engine})`).join("\n")
+    ? roster
+        .map((member) => {
+          const skills = member.skills.length ? `; skills: ${member.skills.join(", ")}` : ""
+          return `- ${member.id}: ${member.description || "General purpose"} (${member.engine}; tools: ${member.tools}${skills})`
+        })
+        .join("\n")
     : "(nobody is available)"
 
   return [
@@ -263,7 +276,7 @@ export function buildOrchestratorInstructions(own: string, roster: RosterEntry[]
       "```ravex-plan",
       '{"tasks":[{"key":"audit","title":"Short title","description":"Everything the agent needs to know","agent":"<team member id>","dependsOn":[],"edits":false},{"key":"fix","title":"Short title","description":"...","agent":"<team member id>","dependsOn":["audit"],"edits":true,"reviewer":"<another team member id>"}]}',
       "```",
-      `Rules: at most ${MAX_TASKS_PER_GOAL} tasks per goal. "dependsOn" lists keys from this plan or numbers of finished tasks. Dependent tasks receive the results of the tasks they depend on. Set "edits" to true only for tasks that must change files, because those run one at a time. "reviewer" is optional and makes another agent check the work. Agents can't see this conversation, so each description must stand on its own.`,
+      `Rules: at most ${MAX_TASKS_PER_GOAL} tasks per goal. "dependsOn" lists keys from this plan or numbers of finished tasks. Dependent tasks receive the results of the tasks they depend on. Set "edits" to true only for tasks that must change files, because those run one at a time, and only for members with the edit or shell tool. Assign work to whoever has the tools and skills for it. "reviewer" is optional and makes another agent check the work. Agents can't see this conversation, so each description must stand on its own.`,
       "Your message ends at the block. The user approves the plan before anything runs.",
       'If tasks are blocked or failed, you can propose new tasks, and run existing ones again by adding "retry":[<task numbers>] to the block. Unfinished tasks that you leave out are cancelled.',
       "If the request doesn't need the team, just answer it without a block.",

@@ -3,7 +3,8 @@ import { useKeyboard } from "@opentui/react"
 import { useRef } from "react"
 import type { Entry } from "../core/agent-pool.ts"
 import type { Task } from "../core/board.ts"
-import { Entries } from "./conversation.tsx"
+import { Entries, HIDDEN_SCROLLBAR } from "./conversation.tsx"
+import { Prompt } from "./prompt.tsx"
 import { ACCENT, MUTED, TASK_STATUS_COLORS, TASK_STATUS_LABELS, TEXT } from "./theme.ts"
 
 const PAGE_LINES = 10
@@ -15,6 +16,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       {children}
     </box>
   )
+}
+
+function authorLabel(author: string, nameOf: (id: string) => string): string {
+  if (author === "you") return "You"
+  if (author === "system") return "System"
+  return nameOf(author)
 }
 
 export interface TaskDetailProps {
@@ -36,58 +43,53 @@ export function TaskDetail({ task, entries, nameOf, onComment, onClose }: TaskDe
   })
 
   const facts = [
-    `Asignada a ${nameOf(task.assignee)}`,
-    task.edits ? "edita archivos" : "solo lectura",
-    ...(task.reviewer ? [`revisa ${nameOf(task.reviewer)}`] : []),
-    ...(task.dependsOn.length ? [`depende de ${task.dependsOn.join(", ")}`] : []),
+    `Assigned to ${nameOf(task.assignee)}`,
+    task.edits ? "edits files" : "read-only",
+    ...(task.reviewer ? [`reviewer ${nameOf(task.reviewer)}`] : []),
+    ...(task.dependsOn.length ? [`depends on ${task.dependsOn.join(", ")}`] : []),
   ].join(" · ")
 
   return (
-    <box flexDirection="column" flexGrow={1}>
-      <box
-        flexGrow={1}
-        flexBasis={0}
-        border
-        borderColor={TASK_STATUS_COLORS[task.status]}
-        title={` Tarea ${task.id} · ${TASK_STATUS_LABELS[task.status]} `}
-      >
-        <scrollbox ref={scroll} flexGrow={1}>
-          <Section title={task.title}>
-            <text fg={MUTED}>{facts}</text>
-            <text fg={TEXT}>{task.description}</text>
+    <box flexDirection="column" flexGrow={1} paddingLeft={1} paddingRight={1}>
+      <text fg={TASK_STATUS_COLORS[task.status]} flexShrink={0}>
+        {`Task ${task.id} · ${TASK_STATUS_LABELS[task.status]}`}
+      </text>
+      <scrollbox ref={scroll} flexGrow={1} flexBasis={0} marginTop={1} verticalScrollbarOptions={HIDDEN_SCROLLBAR}>
+        <Section title={task.title}>
+          <text fg={MUTED}>{facts}</text>
+          <text fg={TEXT}>{task.description}</text>
+        </Section>
+        {task.result && (
+          <Section title="Result">
+            <text fg={TEXT}>{task.result}</text>
           </Section>
-          {task.result && (
-            <Section title="Resultado">
-              <text fg={TEXT}>{task.result}</text>
-            </Section>
-          )}
-          {task.comments.length > 0 && (
-            <Section title="Comentarios">
-              {task.comments.map((comment, position) => (
-                <text key={position} fg={TEXT}>{`${comment.author === "you" ? "Tú" : comment.author === "system" ? "Sistema" : nameOf(comment.author)}: ${comment.text}`}</text>
-              ))}
-            </Section>
-          )}
-          {entries.length > 0 && (
-            <Section title="Conversación del agente">
-              <Entries entries={entries} />
-            </Section>
-          )}
-        </scrollbox>
-      </box>
-      <box border borderColor={ACCENT} title=" Comentar en la tarea " height={3} flexShrink={0}>
-        <input
-          ref={input}
-          focused
-          placeholder="El agente lo verá en su próximo turno…"
-          onSubmit={() => {
-            if (!input.current) return
-            onComment(input.current.value)
-            input.current.value = ""
-          }}
-        />
-      </box>
-      <text fg={MUTED}> Enter comenta · RePág/AvPág desplaza · Esc volver</text>
+        )}
+        {task.comments.length > 0 && (
+          <Section title="Comments">
+            {task.comments.map((comment, position) => (
+              <text key={position} fg={TEXT}>{`${authorLabel(comment.author, nameOf)}: ${comment.text}`}</text>
+            ))}
+          </Section>
+        )}
+        {entries.length > 0 && (
+          <Section title="Agent conversation">
+            <Entries entries={entries} />
+          </Section>
+        )}
+      </scrollbox>
+      <Prompt
+        inputRef={input}
+        focused
+        placeholder="Comment on this task. The agent sees it on its next turn…"
+        onSubmit={() => {
+          if (!input.current) return
+          onComment(input.current.value)
+          input.current.value = ""
+        }}
+      />
+      <text fg={MUTED} wrapMode="none" flexShrink={0}>
+        Enter comment · PgUp/PgDn scroll · Esc back
+      </text>
     </box>
   )
 }

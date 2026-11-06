@@ -64,6 +64,14 @@ test("editing a built-in agent overrides it, and deleting the copy restores it",
   expect(find("codex")?.model).toBeUndefined()
 })
 
+test("keeps tools and skills, and refuses a file with an unknown tool", () => {
+  store.save(definition("t", { tools: ["edit", "web"], skills: ["caveman"] }), "global")
+  expect(find("t")).toMatchObject({ tools: ["edit", "web"], skills: ["caveman"] })
+
+  writeRaw(paths.global, JSON.stringify({ agents: [{ ...definition("bad"), tools: ["laser"] }] }))
+  expect(store.load().errors.global).toContain("invalid agent")
+})
+
 describe("orchestrator", () => {
   test("keeps the choice", () => {
     store.save(definition("boss"), "global")

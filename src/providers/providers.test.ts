@@ -6,6 +6,83 @@ import type { TurnRequest } from "./types.ts"
 
 const line = (value: unknown) => JSON.stringify(value)
 
+describe("tools and skills", () => {
+  const base = { prompt: "hi", cwd: "/project" }
+  const flagAfter = (args: string[], flag: string) => args[args.indexOf(flag) + 1]
+  const opencodeAgent = (request: Partial<TurnRequest>) => {
+    const config = JSON.parse(
+      opencode.buildEnv?.({ ...base, mode: "edit", ...request })?.OPENCODE_CONFIG_CONTENT ?? "{}",
+    )
+    return config.agent["ravex-custom"]
+  }
+
+  test("change nothing unless the agent chose them", () => {
+    const claudeArgs = claude.buildArgs({ ...base, mode: "edit" }).join(" ")
+    expect(claudeArgs).not.toMatch(/--tools|--allowedTools|--strict-mcp-config|--disable-slash-commands/)
+    expect(codex.buildArgs({ ...base, mode: "edit" }).join(" ")).not.toMatch(/web_search|skills\./)
+    expect(opencode.buildArgs({ ...base, mode: "edit" })).toContain("build")
+    expect(opencodeAgent({})).toBeUndefined()
+  })
+
+  test("Claude only gets the tools it was given, without subagents or other skills", () => {
+    const args = claude.buildArgs({ ...base, mode: "edit", tools: ["edit", "web"], nativeSkills: false })
+    expect(flagAfter(args, "--tools")).toBe("Read,Glob,Grep,Edit,Write,NotebookEdit,WebFetch,WebSearch")
+    expect(args).toContain("--strict-mcp-config")
+    expect(args).toContain("--disable-slash-commands")
+    expect(args).not.toContain("--allowedTools")
+  })
+
+  test("Claude can run any command only in edit mode", () => {
+    const edit = claude.buildArgs({ ...base, mode: "edit", tools: ["shell", "mcp"] })
+    expect(flagAfter(edit, "--tools")).toBe("Read,Glob,Grep,Bash")
+    expect(flagAfter(edit, "--allowedTools")).toBe("Bash")
+    expect(edit).not.toContain("--strict-mcp-config")
+
+    const readOnly = claude.buildArgs({ ...base, mode: "read-only", tools: ["edit", "shell"] })
+    expect(flagAfter(readOnly, "--tools")).toBe("Read,Glob,Grep,Bash")
+    expect(readOnly).not.toContain("--allowedTools")
+    expect(readOnly).toContain("dontAsk")
+  })
+
+  test("Codex can turn off the web and other skills, and its sandbox still decides on edits", () => {
+    const args = codex.buildArgs({ ...base, mode: "read-only", tools: [], nativeSkills: false, sessionId: "s" })
+    expect(args).toContain('web_search="disabled"')
+    expect(args).toContain("skills.include_instructions=false")
+    expect(args).toContain('sandbox_mode="read-only"')
+    expect(args.slice(-3)).toEqual(["s", "--", "hi"])
+    expect(codex.buildArgs({ ...base, mode: "edit", tools: ["web"] })).not.toContain('web_search="disabled"')
+    expect(codex.lockedTools).toEqual(["shell", "mcp"])
+  })
+
+  test("OpenCode denies whatever wasn't chosen", () => {
+    expect(opencode.buildArgs({ ...base, mode: "edit", tools: [] })).toContain("ravex-custom")
+    const { permission } = opencodeAgent({ tools: [], nativeSkills: false })
+    expect(permission).toMatchObject({ "*": "deny", glob: "allow" })
+    expect(permission).not.toContainKeys(["edit", "bash", "webfetch", "skill", "*_*"])
+  })
+
+  test("OpenCode allows what was chosen, and needs edit mode to change anything", () => {
+    const { permission } = opencodeAgent({ tools: ["edit", "shell", "web", "mcp"] })
+    expect(permission).toMatchObject({
+      edit: "allow",
+      bash: "allow",
+      webfetch: "allow",
+      "*_*": "allow",
+      "opencode_*": "deny",
+      external_directory: "deny",
+      skill: "allow",
+    })
+
+    const readOnly = opencodeAgent({ mode: "read-only", tools: ["edit", "shell", "web"] }).permission
+    expect(readOnly).not.toContainKeys(["edit", "bash"])
+    expect(readOnly.webfetch).toBe("allow")
+  })
+
+  test("OpenCode keeps instructions on a custom agent", () => {
+    expect(opencodeAgent({ tools: [], instructions: "Be brief" }).prompt).toBe("Be brief")
+  })
+})
+
 describe("buildArgs", () => {
   const base = { prompt: "-hi", cwd: "/project" }
 

@@ -1,11 +1,14 @@
 import type { Board, Task } from "../core/board.ts"
 import { ACCENT, fit, MUTED, TASK_STATUS_COLORS, TASK_STATUS_ICONS } from "./theme.ts"
 
-export const TASK_PANEL_WIDTH = 38
-const INNER_WIDTH = TASK_PANEL_WIDTH - 2
+const INNER_WIDTH = 36
+const GUTTER = 2
+export const TASK_PANEL_WIDTH = INNER_WIDTH + GUTTER
 const ASSIGNEE_WIDTH = 10
 // The cursor, the icon, the number and their spaces.
 const PREFIX_WIDTH = 6
+// The panel's heading and the space under it.
+const HEADING_LINES = 2
 
 interface Line {
   taskIndex: number
@@ -15,14 +18,14 @@ interface Line {
 
 function detailLine(task: Task, board: Board): string {
   const parts: string[] = []
-  if (board.pendingRetry.includes(task.id)) parts.push("↻ se reintenta")
-  if (task.status === "proposed" && task.edits) parts.push("edita")
-  if (task.status === "proposed" && task.reviewer) parts.push(`revisa ${task.reviewer}`)
-  if (task.status === "review" && task.reviewer) parts.push(`revisa ${task.reviewer}`)
-
+  if (board.pendingRetry.includes(task.id)) parts.push("↻ retry")
+  if (task.status === "proposed" && task.edits) parts.push("edits")
+  if ((task.status === "proposed" || task.status === "review") && task.reviewer) {
+    parts.push(`reviewer ${task.reviewer}`)
+  }
   if (task.status === "todo" || task.status === "proposed") {
     const unfinished = task.dependsOn.filter((id) => board.tasks.find((other) => other.id === id)?.status !== "done")
-    if (unfinished.length > 0) parts.push(`← espera a ${unfinished.join(", ")}`)
+    if (unfinished.length > 0) parts.push(`← waits for ${unfinished.join(", ")}`)
   }
   return parts.join(" · ")
 }
@@ -46,26 +49,25 @@ export interface TaskPanelProps {
   focused: boolean
   height: number
   nameOf: (id: string) => string
-  /** Takes the panel's place when there's no room for both side by side. */
+  /** Takes the conversation's place when there's no room for both side by side. */
   grow?: boolean
 }
 
 export function TaskPanel({ board, cursor, focused, height, nameOf, grow }: TaskPanelProps) {
   const lines = buildLines(board, cursor, focused, nameOf)
-  const visible = Math.max(1, height - 2)
+  const visible = Math.max(1, height - HEADING_LINES)
   const cursorLine = lines.findIndex((line) => line.taskIndex === cursor)
   const start = Math.max(0, Math.min(cursorLine, lines.length - visible))
 
   return (
     <box
-      {...(grow ? { flexGrow: 1 } : { width: TASK_PANEL_WIDTH })}
+      {...(grow ? { flexGrow: 1 } : { width: TASK_PANEL_WIDTH, paddingLeft: GUTTER })}
       flexShrink={0}
-      border
-      borderColor={focused ? ACCENT : MUTED}
-      title=" Tareas "
       flexDirection="column"
     >
-      {lines.length === 0 && <text fg={MUTED}> Sin tareas todavía</text>}
+      <box height={HEADING_LINES} flexShrink={0}>
+        <text fg={focused ? ACCENT : MUTED}>Tasks</text>
+      </box>
       {lines.slice(start, start + visible).map((line, position) => (
         <text key={`${line.taskIndex}-${position}`} fg={line.color} wrapMode="none">
           {line.text}

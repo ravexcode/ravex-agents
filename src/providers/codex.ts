@@ -33,9 +33,13 @@ export const codex: Provider = {
   label: "Codex",
   binary: "codex",
 
+  // Commands are how it reads files, so its sandbox limits them instead. Its MCP
+  // servers can only be turned off one by one, which would need their names here.
+  lockedTools: ["shell", "mcp"],
+
   listModels: async () => parseCodexModels(await readCommand(["codex", "debug", "models"])),
 
-  buildArgs({ prompt, mode, sessionId, model, instructions }) {
+  buildArgs({ prompt, mode, sessionId, model, instructions, tools, nativeSkills }) {
     // `codex exec resume` has no --sandbox flag, so both paths set it as config.
     const sandbox = mode === "edit" ? "workspace-write" : "read-only"
     return [
@@ -47,6 +51,8 @@ export const codex: Provider = {
       ...(model ? ["-m", model] : []),
       // Config values are parsed as TOML, whose strings accept JSON's escapes.
       ...(instructions ? ["-c", `developer_instructions=${JSON.stringify(instructions)}`] : []),
+      ...(tools && !tools.includes("web") ? ["-c", 'web_search="disabled"'] : []),
+      ...(nativeSkills === false ? ["-c", "skills.include_instructions=false"] : []),
       ...(sessionId ? [sessionId] : []),
       "--",
       prompt,

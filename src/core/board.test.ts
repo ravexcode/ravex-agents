@@ -49,9 +49,17 @@ describe("parsePlan", () => {
     expect(parse({ tasks: [item("x")] }, { ...EMPTY_BOARD, nextTaskId: 9 })?.tasks[0]?.id).toBe(9)
   })
 
-  test("ignores a block that doesn't end the message, so the format can be quoted", () => {
-    expect(parsePlan(`${block({ tasks: [item("x")] })}\nLike that.`, { workers, board: EMPTY_BOARD })).toBeNull()
-    expect(parsePlan("Just an answer.", { workers, board: EMPTY_BOARD })).toBeNull()
+  test("accepts a closing remark after the block, without keeping the block", () => {
+    const plan = parsePlan(`${block({ tasks: [item("x")] })}\n\nChoices I made: none.`, { workers, board: EMPTY_BOARD })
+    expect(plan?.tasks.length).toBe(1)
+    expect(plan?.text).toBe("Here is the plan.\n\nChoices I made: none.")
+  })
+
+  test("ignores what only quotes the format", () => {
+    const options = { workers, board: EMPTY_BOARD }
+    expect(parsePlan("Just an answer.", options)).toBeNull()
+    expect(parsePlan("The format is\n```ravex-plan\n{...}\n```\nand so on.", options)).toBeNull()
+    expect(parsePlan('  ```ravex-plan\n  {"tasks":[]}\n  ```\nIndented, as a quote.', options)).toBeNull()
   })
 
   test.each([
@@ -165,6 +173,11 @@ describe("parseWorkerReport", () => {
   test("an unknown status counts as done", () => {
     expect(parseWorkerReport(report({ status: "?" })).status).toBe("done")
   })
+})
+
+test("a worker's report also survives a closing remark", () => {
+  const report = parseWorkerReport('Work.\n```ravex-task\n{"status":"blocked","summary":"Stuck"}\n```\nLet me know.')
+  expect(report).toMatchObject({ status: "blocked", summary: "Stuck", text: "Work.\n\nLet me know." })
 })
 
 describe("parseReview", () => {

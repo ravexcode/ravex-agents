@@ -57,7 +57,8 @@ export const runTurn: RunTurn = async (provider, request, onEvent, signal) => {
   try {
     proc = Bun.spawn([provider.binary, ...provider.buildArgs(request)], {
       cwd: request.cwd,
-      env: { ...process.env, ...provider.buildEnv?.(request) },
+      // OpenCode works in $PWD rather than in its real directory.
+      env: { ...process.env, PWD: request.cwd, ...provider.buildEnv?.(request) },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

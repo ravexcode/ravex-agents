@@ -69,6 +69,17 @@ test("passes the provider's environment to the process", async () => {
   expect(events).toEqual([{ type: "text-delta", text: "from-provider" }])
 })
 
+test("sets PWD to the turn's folder, because a CLI may trust it over the real one", async () => {
+  const events: ProviderEvent[] = []
+  await runTurn(
+    scriptProvider("console.log(process.env.PWD)"),
+    { prompt: "hi", cwd: "/tmp", mode: "read-only" },
+    (event) => events.push(event),
+    new AbortController().signal,
+  )
+  expect(events).toEqual([{ type: "text-delta", text: "/tmp" }])
+})
+
 test("reports a missing binary instead of throwing", async () => {
   const { result } = await run({ ...scriptProvider(""), binary: "ravex-does-not-exist" })
   expect(result.status).toBe("failed")

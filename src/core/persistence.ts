@@ -53,13 +53,13 @@ export class StateFile implements StatePersistence {
     if (!existsSync(this.#path)) return {}
     try {
       const data: unknown = JSON.parse(readFileSync(this.#path, "utf8"))
-      if (!isSnapshot(data)) throw new Error("formato desconocido")
+      if (!isSnapshot(data)) throw new Error("unknown format")
       return { snapshot: data }
     } catch (error) {
       const aside = `${this.#path}.corrupt`
       renameSync(this.#path, aside)
       const reason = error instanceof Error ? error.message : String(error)
-      return { error: `No se pudo recuperar el estado (${reason}). Se guardó aparte en ${aside}` }
+      return { error: `Couldn't restore the saved state (${reason}). It was moved to ${aside}` }
     }
   }
 

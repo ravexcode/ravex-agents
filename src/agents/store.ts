@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import type { Provider, ProviderId } from "../providers/types.ts"
+import { TOOL_IDS, type Provider, type ProviderId, type ToolId } from "../providers/types.ts"
 import { DEFAULT_ORCHESTRATOR, type Agent, type AgentDefinition, type SavableOrigin } from "./types.ts"
 
 export interface AgentPaths {
@@ -30,6 +30,10 @@ export function defaultAgentPaths(cwd: string, env: NodeJS.ProcessEnv = process.
   }
 }
 
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+}
+
 function isDefinition(value: unknown, providerIds: Set<ProviderId>): value is AgentDefinition {
   if (typeof value !== "object" || value === null) return false
   const agent = value as Record<string, unknown>
@@ -41,7 +45,10 @@ function isDefinition(value: unknown, providerIds: Set<ProviderId>): value is Ag
     providerIds.has(agent.provider as ProviderId) &&
     (agent.model === undefined || typeof agent.model === "string") &&
     typeof agent.instructions === "string" &&
-    (agent.mode === "read-only" || agent.mode === "edit")
+    (agent.mode === "read-only" || agent.mode === "edit") &&
+    (agent.tools === undefined ||
+      (isStringList(agent.tools) && agent.tools.every((tool) => TOOL_IDS.includes(tool as ToolId)))) &&
+    (agent.skills === undefined || isStringList(agent.skills))
   )
 }
 
@@ -55,6 +62,8 @@ function normalize(agent: AgentDefinition): AgentDefinition {
     ...(agent.model ? { model: agent.model } : {}),
     instructions: agent.instructions,
     mode: agent.mode,
+    ...(agent.tools ? { tools: agent.tools } : {}),
+    ...(agent.skills ? { skills: agent.skills } : {}),
   }
 }
 
@@ -81,7 +90,7 @@ export class AgentStore {
       merged.set(DEFAULT_ORCHESTRATOR, {
         id: DEFAULT_ORCHESTRATOR,
         name: "Lead",
-        description: "Planifica el trabajo y reparte tareas al equipo.",
+        description: "Plans the work and assigns tasks to the team.",
         provider: first.id,
         instructions: "",
         mode: "read-only",

@@ -6,6 +6,10 @@ export type ProviderId = "claude" | "codex" | "opencode"
  */
 export type PermissionMode = "read-only" | "edit"
 
+/** What an agent may use beyond reading the project, which every agent can do. */
+export const TOOL_IDS = ["edit", "shell", "web", "mcp"] as const
+export type ToolId = (typeof TOOL_IDS)[number]
+
 export interface TurnRequest {
   prompt: string
   cwd: string
@@ -14,6 +18,10 @@ export interface TurnRequest {
   /** The CLI's default model when omitted. */
   model?: string
   instructions?: string
+  /** The CLI's full default set when omitted. The permission mode still applies on top. */
+  tools?: ToolId[]
+  /** False hides the skills the CLI finds by itself. */
+  nativeSkills?: boolean
 }
 
 export type ProviderEvent =
@@ -28,6 +36,8 @@ export interface Provider {
   id: ProviderId
   label: string
   binary: string
+  /** Tools this CLI can't turn off, which it limits through its sandbox instead. */
+  lockedTools?: ToolId[]
   buildArgs(request: TurnRequest): string[]
   buildEnv?(request: TurnRequest): Record<string, string>
   /** The models this CLI offers. Rejects if they can't be read. */

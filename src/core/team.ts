@@ -1,8 +1,9 @@
+import type { SkillInstructions } from "../agents/skills.ts"
 import type { Agent } from "../agents/types.ts"
 import type { RunTurn } from "../providers/runner.ts"
 import type { PermissionMode, Provider } from "../providers/types.ts"
 import { AgentPool, type Entry, type Pane } from "./agent-pool.ts"
-import { parseTrailingBlock, truncateResult } from "./blocks.ts"
+import { parseBlock, truncateResult } from "./blocks.ts"
 import {
   buildIssuePrompt,
   buildOrchestratorInstructions,
@@ -66,6 +67,8 @@ export interface TeamOptions {
   isAvailable?: (provider: Provider) => boolean
   persistence?: StatePersistence
   snapshot?: TeamSnapshot
+  /** Turns skill names into instructions. Agents get no skills without it. */
+  resolveSkills?: (names: string[]) => SkillInstructions
 }
 
 export function lowerMode(...modes: PermissionMode[]): PermissionMode {
@@ -87,7 +90,7 @@ export function tasksLimitedByMode(state: TeamState): Task[] {
 export function permissionWarning(state: TeamState): string | undefined {
   const limited = tasksLimitedByMode(state).length
   return limited > 0
-    ? `${state.board.phase === "proposed" ? "Aprobar" : "Continuar"} no da permisos: ${limited} de edición irían en solo lectura (^E y modo máximo del agente).`
+    ? `${state.board.phase === "proposed" ? "Approving" : "Continuing"} doesn't grant permissions: ${limited} editing ${limited === 1 ? "task" : "tasks"} would run read-only (^E, and the agent's tools).`
     : undefined
 }
 
@@ -102,6 +105,7 @@ interface PlanTurn {
 export class Team {
   readonly #pool: AgentPool
   readonly #persistence?: StatePersistence
+  readonly #resolveSkills?: (names: string[]) => SkillInstructions
   readonly #listeners = new Set<() => void>()
   readonly #active = new Map<number, string>()
   #state: TeamState
@@ -117,6 +121,7 @@ export class Team {
 
   constructor(providers: Provider[], agents: Agent[], orchestratorId: string, options: TeamOptions = {}) {
     this.#persistence = options.persistence
+    this.#resolveSkills = options.resolveSkills
     const { snapshot } = options
     this.#state = {
       mode: "read-only",
@@ -173,7 +178,7 @@ export class Team {
     switch (board.phase) {
       case "planning":
       case "wrapping-up":
-        return "El orquestador está trabajando. Pulsa Esc para cancelarlo."
+        return "The orchestrator is working. Press Esc to cancel it."
       case "running":
         void this.#chatDuringRun(message)
         return undefined
@@ -184,8 +189,8 @@ export class Team {
       case "paused": {
         if (board.replans >= MAX_REPLANS) {
           return board.phase === "proposed"
-            ? `Límite de ${MAX_REPLANS} replanificaciones: aprueba o descarta este plan.`
-            : `Límite de ${MAX_REPLANS} replanificaciones: pulsa Esc para cerrar el objetivo.`
+            ? `Reached the limit of ${MAX_REPLANS} replans: approve or discard this plan.`
+            : `Reached the limit of ${MAX_REPLANS} replans: press Esc to close the goal.`
         }
         if (board.phase === "paused") this.#commentOnBlocked(message)
         const prompt =
@@ -217,8 +222,22 @@ export class Team {
       id: agent.id,
       description: agent.description,
       engine: agent.model ? `${agent.provider}/${agent.model}` : agent.provider,
+      tools: describeTools(agent),
+      skills: agent.skills ?? [],
     }))
-    return buildOrchestratorInstructions(this.#orchestrator()?.instructions ?? "", roster)
+    return buildOrchestratorInstructions(this.#ownInstructions(this.#orchestrator()), roster)
+  }
+
+  /** The agent's instructions with its skills. Read each turn, so edits to a skill apply right away. */
+  #ownInstructions(agent: Agent | undefined): string {
+    if (!agent) return ""
+    if (!agent.skills?.length || !this.#resolveSkills) return agent.instructions
+
+    const { text, missing } = this.#resolveSkills(agent.skills)
+    if (missing.length > 0) {
+      this.#pool.addEntry(agent.id, "error", `Skills not found: ${missing.join(", ")}`)
+    }
+    return [agent.instructions, text].filter(Boolean).join("\n\n")
   }
 
   async #planTurn({ prompt, display, newGoal }: PlanTurn): Promise<void> {
@@ -238,8 +257,12 @@ export class Team {
     // A malformed plan is worth one automatic correction, but not a loop.
     for (let attempt = 0; outcome.status === "done"; attempt++) {
       const base = newGoal ? { ...EMPTY_BOARD, nextTaskId: this.#state.board.nextTaskId } : this.#withoutProposal()
-      const workers = new Set(this.workers().map((agent) => agent.id))
-      const plan = parsePlan(outcome.output, { workers, board: base })
+      const workers = this.workers()
+      const plan = parsePlan(outcome.output, {
+        workers: new Set(workers.map((agent) => agent.id)),
+        editors: new Set(workers.filter((agent) => agent.mode === "edit").map((agent) => agent.id)),
+        board: base,
+      })
       if (!plan) break
 
       this.#pool.replaceText(id, outcome.textEntryId, plan.text)
@@ -257,12 +280,12 @@ export class Team {
         this.#pool.addEntry(
           id,
           "info",
-          `Plan propuesto: ${count} ${count === 1 ? "tarea" : "tareas"}. Nada se ejecuta hasta que apruebes. Enter aprueba, escribe para cambiarlo y Esc lo descarta.`,
+          `Proposed ${count} ${count === 1 ? "task" : "tasks"}. Nothing runs until you approve. Enter approves, typing changes the plan, Esc discards it.`,
         )
         return
       }
 
-      this.#pool.addEntry(id, "error", `Plan no válido: ${plan.error}`)
+      this.#pool.addEntry(id, "error", `Invalid plan: ${plan.error}`)
       if (attempt > 0) break
       outcome = await this.#pool.turn(id, {
         prompt: buildPlanErrorPrompt(plan.error),
@@ -308,16 +331,16 @@ export class Team {
 
   /** Removes a plan that arrived when one can't be accepted. */
   #stripPlan(id: string, output: string, entryId: number | undefined): void {
-    const block = parseTrailingBlock(output, "ravex-plan")
+    const block = parseBlock(output, "ravex-plan")
     if (!block) return
     this.#pool.replaceText(id, entryId, block.text)
-    this.#pool.addEntry(id, "info", "Plan ignorado: no se aceptan planes en este momento.")
+    this.#pool.addEntry(id, "info", "Plan ignored: plans aren't accepted right now.")
   }
 
   /** Returns a warning if some of the work won't have the permissions it expects. */
   approve(): string | undefined {
     const { board } = this.#state
-    if (board.phase !== "proposed") return "No hay ningún plan propuesto."
+    if (board.phase !== "proposed") return "There's no proposed plan."
     const warning = permissionWarning(this.#state)
 
     this.#setBoard({
@@ -334,7 +357,7 @@ export class Team {
         return leftOut ? { ...task, status: "cancelled" } : task
       }),
     })
-    this.#pool.addEntry(this.#state.orchestratorId, "info", "Plan aprobado.")
+    this.#pool.addEntry(this.#state.orchestratorId, "info", "Plan approved.")
     this.#beginRun()
     return warning
   }
@@ -344,7 +367,7 @@ export class Team {
     if (board.phase !== "proposed") return
     this.#setBoard(this.#withoutProposal())
     this.#setBoard({ phase: this.#restingPhase() })
-    this.#pool.addEntry(this.#state.orchestratorId, "info", "Plan descartado.")
+    this.#pool.addEntry(this.#state.orchestratorId, "info", "Plan discarded.")
   }
 
   /** Continues paused work that can still run. Returns a notice if there's none. */
@@ -352,7 +375,7 @@ export class Team {
     const { board } = this.#state
     if (board.phase !== "paused") return undefined
     if (nextRuns(board.tasks, this.#active, this.#directEdits > 0).length === 0) {
-      return "No hay tareas listas para continuar. Escribe qué hacer, o pulsa Esc para cerrar el objetivo."
+      return "No tasks are ready to continue. Type what to do, or press Esc to close the goal."
     }
     const warning = permissionWarning(this.#state)
     this.#setBoard({ phase: "running" })
@@ -378,7 +401,7 @@ export class Team {
           : task,
       ),
     })
-    this.#pool.addEntry(this.#state.orchestratorId, "info", "Objetivo cerrado.")
+    this.#pool.addEntry(this.#state.orchestratorId, "info", "Goal closed.")
   }
 
   /** Stops the running tasks. Unstarted ones stay, so work can continue later. */
@@ -395,12 +418,12 @@ export class Team {
   /** Returns a notice if it can't be reassigned. */
   reassign(taskId: number, agentId: string): string | undefined {
     const task = this.#state.board.tasks.find((candidate) => candidate.id === taskId)
-    if (!task) return "Esa tarea no existe."
+    if (!task) return "That task doesn't exist."
     if (!["proposed", "todo", "blocked", "failed", "cancelled"].includes(task.status)) {
-      return "Solo se pueden reasignar tareas que no estén en marcha ni terminadas."
+      return "Only tasks that aren't running or finished can be reassigned."
     }
     if (!this.workers().some((agent) => agent.id === agentId)) {
-      return `"${agentId}" no está disponible en el equipo.`
+      return `"${agentId}" isn't available on the team.`
     }
     this.#updateTask(taskId, ({ reviewer, ...rest }) => ({
       ...rest,
@@ -432,8 +455,8 @@ export class Team {
     for (const run of runs) {
       this.#active.set(run.task.id, run.agent)
       if (run.kind === "work") this.#updateTask(run.task.id, (task) => ({ ...task, status: "running" }))
-      const verb = run.kind === "work" ? "empieza" : "revisa"
-      this.#roomEvent(`${this.#nameOf(run.agent)} ${verb} la tarea ${run.task.id}: ${run.task.title}`)
+      const verb = run.kind === "work" ? "started" : "is reviewing"
+      this.#roomEvent(`${this.#nameOf(run.agent)} ${verb} task ${run.task.id}: ${run.task.title}`)
       void this.#runTask(run)
     }
     if (this.#active.size === 0 && this.#directEdits === 0) this.#onIdle()
@@ -445,12 +468,12 @@ export class Team {
 
     if (this.#userStopped) {
       this.#setBoard({ phase: "paused" })
-      this.#pool.addEntry(orchestratorId, "info", "Trabajo detenido. Enter continúa, escribe qué hacer, o Esc cierra el objetivo.")
+      this.#pool.addEntry(orchestratorId, "info", "Work stopped. Enter continues, type what to do, or Esc closes the goal.")
     } else if (tasks.every((task) => task.status === "done" || task.status === "cancelled")) {
       void this.#wrapUp()
     } else if (replans >= MAX_REPLANS) {
       this.#setBoard({ phase: "paused" })
-      this.#pool.addEntry(orchestratorId, "error", `Hay tareas sin terminar y se alcanzó el límite de ${MAX_REPLANS} replanificaciones. Pulsa Esc para cerrar el objetivo.`)
+      this.#pool.addEntry(orchestratorId, "error", `Some tasks are unfinished and the limit of ${MAX_REPLANS} replans was reached. Press Esc to close the goal.`)
     } else {
       void this.#planTurn({ prompt: buildIssuePrompt(this.#state.board) })
     }
@@ -459,7 +482,7 @@ export class Team {
   async #wrapUp(): Promise<void> {
     const id = this.#state.orchestratorId
     this.#setBoard({ phase: "wrapping-up" })
-    this.#pool.addEntry(id, "info", "Todas las tareas han terminado.")
+    this.#pool.addEntry(id, "info", "All tasks finished.")
     const outcome = await this.#pool.turn(id, {
       prompt: buildWrapUpPrompt(this.#state.board),
       sessionKey: ORCHESTRATOR_SESSION,
@@ -484,10 +507,10 @@ export class Team {
     const mode = task.edits ? lowerMode(this.#state.mode, agent?.mode ?? "read-only") : "read-only"
     const outcome = await this.#pool.turn(agentId, {
       prompt: buildTaskPrompt(task, this.#state.board, formatRoomContext(this.#state.room, TASK_ROOM_CONTEXT)),
-      display: `Tarea ${task.id}: ${task.title}`,
+      display: `Task ${task.id}: ${task.title}`,
       sessionKey: `task:${task.id}`,
       mode,
-      instructions: buildWorkerInstructions(agent?.instructions ?? "", mode === "edit"),
+      instructions: buildWorkerInstructions(this.#ownInstructions(agent), mode === "edit"),
       taskId: task.id,
       signal: this.#runController.signal,
     })
@@ -496,12 +519,12 @@ export class Team {
 
     if (outcome.status === "cancelled") {
       this.#updateTask(task.id, (current) => ({ ...current, status: "cancelled" }))
-      this.#roomEvent(`Tarea ${task.id} cancelada`)
+      this.#roomEvent(`Task ${task.id} cancelled`)
       return
     }
     if (outcome.status === "failed") {
       this.#updateTask(task.id, (current) => ({ ...current, status: "failed", result: truncateResult(outcome.output) }))
-      this.#roomEvent(`Tarea ${task.id} falló: ${firstLine(outcome.output)}`)
+      this.#roomEvent(`Task ${task.id} failed: ${firstLine(outcome.output)}`)
       return
     }
 
@@ -513,8 +536,8 @@ export class Team {
 
     if (report.status === "blocked") {
       this.#updateTask(task.id, (current) => ({ ...current, status: "blocked", result }))
-      this.#roomEvent(`Tarea ${task.id} bloqueada: ${firstLine(report.summary)}`)
-      this.#pool.addEntry(this.#state.orchestratorId, "info", `Tarea ${task.id} bloqueada (${this.#nameOf(agentId)}): ${report.summary}`)
+      this.#roomEvent(`Task ${task.id} blocked: ${firstLine(report.summary)}`)
+      this.#pool.addEntry(this.#state.orchestratorId, "info", `Task ${task.id} blocked (${this.#nameOf(agentId)}): ${report.summary}`)
       return
     }
 
@@ -524,17 +547,17 @@ export class Team {
       return
     }
     this.#updateTask(task.id, (current) => ({ ...current, status: "done", result }))
-    this.#roomEvent(`Tarea ${task.id} terminada por ${this.#nameOf(agentId)}`)
+    this.#roomEvent(`Task ${task.id} finished by ${this.#nameOf(agentId)}`)
   }
 
   async #review(task: Task, reviewerId: string): Promise<void> {
     const agent = this.#agent(reviewerId)
     const outcome = await this.#pool.turn(reviewerId, {
       prompt: buildReviewPrompt(task),
-      display: `Revisión de la tarea ${task.id}: ${task.title}`,
+      display: `Review of task ${task.id}: ${task.title}`,
       sessionKey: `review:${task.id}`,
       mode: "read-only",
-      instructions: buildReviewerInstructions(agent?.instructions ?? ""),
+      instructions: buildReviewerInstructions(this.#ownInstructions(agent)),
       taskId: task.id,
       signal: this.#runController.signal,
     })
@@ -545,9 +568,9 @@ export class Team {
       return
     }
     if (outcome.status === "failed") {
-      this.#addComment(task.id, reviewerId, `La revisión falló: ${outcome.output}`)
+      this.#addComment(task.id, reviewerId, `The review failed: ${outcome.output}`)
       this.#updateTask(task.id, (current) => ({ ...current, status: "blocked" }))
-      this.#roomEvent(`La revisión de la tarea ${task.id} falló`)
+      this.#roomEvent(`The review of task ${task.id} failed`)
       return
     }
 
@@ -557,16 +580,16 @@ export class Team {
 
     if (review.verdict === "approved") {
       this.#updateTask(task.id, (current) => ({ ...current, status: "done" }))
-      this.#roomEvent(`${this.#nameOf(reviewerId)} aprobó la tarea ${task.id}`)
+      this.#roomEvent(`${this.#nameOf(reviewerId)} approved task ${task.id}`)
     } else if (review.verdict === "none") {
       this.#updateTask(task.id, (current) => ({ ...current, status: "blocked" }))
-      this.#roomEvent(`La revisión de la tarea ${task.id} no dio veredicto`)
+      this.#roomEvent(`The review of task ${task.id} gave no verdict`)
     } else if (task.reviewRounds >= MAX_REVIEW_ROUNDS) {
       this.#updateTask(task.id, (current) => ({ ...current, status: "blocked" }))
-      this.#roomEvent(`Tarea ${task.id} bloqueada: sigue con cambios tras ${MAX_REVIEW_ROUNDS} rondas de revisión`)
+      this.#roomEvent(`Task ${task.id} blocked: still needs changes after ${MAX_REVIEW_ROUNDS} review rounds`)
     } else {
       this.#updateTask(task.id, (current) => ({ ...current, status: "todo", reviewRounds: current.reviewRounds + 1 }))
-      this.#roomEvent(`${this.#nameOf(reviewerId)} pidió cambios en la tarea ${task.id}`)
+      this.#roomEvent(`${this.#nameOf(reviewerId)} asked for changes on task ${task.id}`)
     }
   }
 
@@ -576,7 +599,7 @@ export class Team {
     const message = text.trim()
     if (!message) return undefined
     const agent = this.#agent(id)
-    if (!agent) return `Ese agente no existe.`
+    if (!agent) return "That agent doesn't exist."
     void this.#directTurn(agent, message)
     return undefined
   }
@@ -589,7 +612,7 @@ export class Team {
     // Everyone shares one folder, so this waits for no one but can't edit alongside anyone.
     const mode = editing ? "read-only" : allowed
     if (editing && allowed === "edit") {
-      this.#pool.addEntry(agent.id, "info", "Otro agente está editando, así que este turno va en solo lectura.")
+      this.#pool.addEntry(agent.id, "info", "Another agent is editing, so this turn runs read-only.")
     }
 
     if (mode === "edit") this.#directEdits++
@@ -598,7 +621,7 @@ export class Team {
       display: message,
       sessionKey: DIRECT_SESSION,
       mode,
-      instructions: agent.instructions,
+      instructions: this.#ownInstructions(agent),
     })
     if (mode === "edit") {
       this.#directEdits--
@@ -616,9 +639,9 @@ export class Team {
 
     const { known, unknown } = parseMentions(message, new Set(this.#state.agents.map((agent) => agent.id)))
     if (unknown.length > 0) {
-      this.#addRoomMessage({ kind: "info", text: `No hay nadie llamado ${unknown.map((id) => `@${id}`).join(", ")}` })
+      this.#addRoomMessage({ kind: "info", text: `Nobody is called ${unknown.map((id) => `@${id}`).join(", ")}` })
     }
-    if (known.length === 0) return "Nadie responde sin una mención: usa @nombre para llamar a un agente."
+    if (known.length === 0) return "Nobody replies without a mention: use @name to call an agent."
     this.#startRoomChain(known)
     return undefined
   }
@@ -647,7 +670,7 @@ export class Team {
 
     while (queue.length > 0 && !signal.aborted && !this.#stopped) {
       if (replies >= MAX_ROOM_REPLIES) {
-        this.#addRoomMessage({ kind: "info", text: `Límite de ${MAX_ROOM_REPLIES} respuestas encadenadas. Menciona a alguien para continuar.` })
+        this.#addRoomMessage({ kind: "info", text: `Reached the limit of ${MAX_ROOM_REPLIES} chained replies. Mention someone to continue.` })
         break
       }
       const id = queue.shift() as string
@@ -659,12 +682,12 @@ export class Team {
       const teammates = this.#state.agents.filter((other) => other.id !== id).map((other) => `@${other.id}`)
       const outcome = await this.#pool.turn(id, {
         prompt: buildRoomPrompt(this.#state.room, id),
-        display: "Mención en la sala",
+        display: "Mentioned in the room",
         // The room is the shared memory, so a clean session sees only that.
         sessionKey: null,
         // Changes to files go through tasks, whatever the session's mode is.
         mode: "read-only",
-        instructions: buildRoomInstructions(agent.instructions, teammates),
+        instructions: buildRoomInstructions(this.#ownInstructions(agent), teammates),
         room: true,
         signal,
       })
@@ -680,9 +703,9 @@ export class Team {
           if (next !== id && !queue.includes(next)) queue.push(next)
         }
       } else if (outcome.status === "failed") {
-        this.#addRoomMessage({ kind: "error", text: `${agent.name} falló: ${firstLine(outcome.output)}` })
+        this.#addRoomMessage({ kind: "error", text: `${agent.name} failed: ${firstLine(outcome.output)}` })
       } else {
-        this.#addRoomMessage({ kind: "info", text: `${agent.name} cancelado` })
+        this.#addRoomMessage({ kind: "info", text: `${agent.name} cancelled` })
       }
     }
   }
@@ -766,6 +789,11 @@ export class Team {
       this.#persistTimer.unref?.()
     }
   }
+}
+
+function describeTools(agent: Agent): string {
+  if (agent.tools) return ["read", ...agent.tools].join(", ")
+  return agent.mode === "edit" ? "all" : "read"
 }
 
 function firstLine(text: string): string {

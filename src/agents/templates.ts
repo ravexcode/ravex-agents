@@ -1,14 +1,18 @@
+import type { ToolId } from "../providers/types.ts"
+
 export interface AgentTemplate {
   label: string
   name: string
   description: string
   instructions: string
+  tools: ToolId[]
 }
 
 export const AGENT_TEMPLATES: AgentTemplate[] = [
-  { label: "En blanco", name: "", description: "", instructions: "" },
+  { label: "Blank", name: "", description: "", instructions: "", tools: [] },
   {
     label: "Cybersecurity",
+    tools: ["web"],
     name: "Security",
     description: "Audits code for vulnerabilities and insecure configuration.",
     instructions:
@@ -16,6 +20,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     label: "Design",
+    tools: ["edit"],
     name: "Design",
     description: "Reviews and proposes UI, UX and visual design.",
     instructions:
@@ -23,6 +28,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     label: "Code reviewer",
+    tools: [],
     name: "Reviewer",
     description: "Reviews changes for bugs and maintainability.",
     instructions:
@@ -30,6 +36,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     label: "Tester",
+    tools: ["edit", "shell"],
     name: "Tester",
     description: "Designs test cases and finds gaps in test coverage.",
     instructions:
@@ -37,6 +44,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     label: "Researcher",
+    tools: ["web"],
     name: "Researcher",
     description: "Investigates questions and summarizes findings with evidence.",
     instructions:

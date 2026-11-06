@@ -1,125 +1,156 @@
 # Ravex Agents
 
-Un equipo de agentes con un orquestador, exclusivo de la terminal. Creas agentes eligiendo el proveedor y el modelo de cada uno, le das un objetivo al orquestador, este propone un plan y, cuando lo apruebas, el equipo trabaja en un tablero compartido y una sala de grupo.
+A team of agents with an orchestrator, in your terminal. You create agents with their own name, provider, model, skills and tools, then give the orchestrator a goal. It proposes a plan, and once you approve it, the team works through a shared board and a group room.
 
-Usa tus CLIs ya instaladas y autenticadas: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/cli) y [OpenCode](https://opencode.ai). No necesitas tenerlas todas; un agente de una CLI que falte aparece como no instalado y no recibe tareas.
+It runs on the CLIs you already have installed and signed in: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/cli) and [OpenCode](https://opencode.ai). You don't need all of them. An agent whose CLI is missing shows as not installed and gets no tasks.
 
-## Requisitos
+## Requirements
 
-- [Bun](https://bun.sh) 1.3 o superior
-- Al menos una de las CLIs anteriores en tu `PATH`
-- Codex necesita que la carpeta sea un repositorio de Git
+- [Bun](https://bun.sh) 1.3 or later
+- At least one of the CLIs above in your `PATH`
+- Codex needs the folder to be a Git repository
 
-## Empezar
+## Getting started
 
 ```sh
 bun install
 bun run dev
 ```
 
-Para un ejecutable independiente (Linux x64 con glibc):
+For a standalone executable (Linux x64 with glibc):
 
 ```sh
 bun run build
 ./dist/ravex-agents
 ```
 
-Trabaja sobre la carpeta desde la que lo abras.
+It works on the folder you open it from.
 
-## Cómo funciona
+## How it works
 
-1. Escribes un objetivo en la conversación del orquestador.
-2. El orquestador puede leer el proyecto, pero solo planifica. Recibe la lista del equipo y propone tareas.
-3. **Nada se ejecuta hasta que apruebas.** Puedes aprobar, escribir cambios para que replanifique, descartar el plan o reasignar tareas.
-4. Las tareas arrancan cuando sus dependencias terminan, y reciben sus resultados y comentarios.
-5. Si algo falla o se bloquea, sus dependientes esperan y el orquestador propone qué hacer. Ese plan también requiere tu aprobación.
-6. Al terminar todo, el orquestador te da un resumen.
+1. You write a goal in the orchestrator's conversation.
+2. The orchestrator can read the project, but it only plans. It knows each member's tools and skills, and proposes tasks.
+3. **Nothing runs until you approve.** You can approve, type changes so it plans again, discard the plan, or reassign tasks.
+4. Tasks start once their dependencies finish, and receive their results and comments.
+5. If something fails or gets blocked, its dependents wait and the orchestrator proposes what to do. That plan needs your approval too.
+6. When everything finishes, the orchestrator gives you a summary.
 
-Reglas del tablero:
+Board rules:
 
-| Regla | Límite |
+| Rule | Limit |
 |---|---|
-| Agentes trabajando a la vez | 4 |
-| Tareas por agente a la vez | 1 |
-| Tareas que editan a la vez | 1, porque todos comparten la carpeta |
-| Tareas por objetivo | 12 |
-| Replanificaciones por objetivo | 3 |
-| Rondas de cambios por revisión | 2 |
+| Agents working at once | 4 |
+| Tasks per agent at once | 1 |
+| Tasks editing at once | 1, because everyone shares the folder |
+| Tasks per goal | 12 |
+| Replans per goal | 3 |
+| Rounds of changes per review | 2 |
 
-## Teclas
+## Keys
 
-| Tecla | Acción |
+| Key | Action |
 |---|---|
-| `Tab` / `Shift+Tab` | Cambia de conversación: orquestador, sala o un agente |
-| `Enter` con el input vacío | Aprueba el plan propuesto, o continúa el trabajo en pausa |
-| `Esc` | Cancela lo que corresponda a la vista. Sobre un plan, lo descarta. En pausa, dos veces cierra el objetivo |
-| `Ctrl+T` | Panel de tareas: `↑`/`↓` mueve, `Enter` abre el detalle, `r` reasigna |
-| `Ctrl+G` | Equipo: `n` nuevo, `e` editar, `d` borrar, `o` elegir orquestador |
-| `Ctrl+E` | Cambia la sesión entre solo lectura y edición |
-| `Ctrl+C` | Detiene todo y sale |
+| `Tab` / `Shift+Tab` | Switch conversation: orchestrator, room or an agent |
+| `Enter` on an empty prompt | Approve the proposed plan, or continue paused work |
+| `Esc` | Cancel what the view is doing. On a plan, discard it. On a pause, pressing it twice closes the goal |
+| `PgUp` / `PgDn` | Scroll the conversation |
+| `Ctrl+T` | Tasks: `↑`/`↓` move, `Enter` opens the detail, `r` reassigns |
+| `Ctrl+G` | Team: `n` new, `e` edit, `d` delete, `o` make orchestrator |
+| `Ctrl+E` | Switch the session between read-only and edit |
+| `Ctrl+C` | Stop everything and quit |
 
-## Equipo
+## Your team
 
-Hay un agente `Lead`, que es el orquestador por defecto, y uno por cada proveedor. Todos se pueden editar: se guarda una copia que los sobrescribe, y borrarla restaura el original.
+Press `Ctrl+G`, then `n`, to create an agent. Each one has a name, a description that tells the orchestrator what to assign to it, a provider and model, skills, tools and instructions.
 
-El selector de modelos filtra mientras escribes y admite un nombre que no aparezca en la lista.
+There's a built-in `Lead`, which is the default orchestrator, and one agent per provider. You can edit them all: that saves a copy that overrides the original, and deleting the copy restores it.
 
-| CLI | De dónde salen los modelos |
+Agents are saved in two places, and project agents win when IDs match. An older `agents.json` keeps working, and its `subagents` field is ignored.
+
+| Where | File |
 |---|---|
-| Claude | No tiene comando para listarlos, así que ofrece los alias `fable`, `opus`, `sonnet` y `haiku` |
-| Codex | `codex debug models`, solo los que marca como seleccionables |
+| Global | `$XDG_CONFIG_HOME/ravex-agents/agents.json` (`~/.config` by default) |
+| Project | `.ravex/agents.json` |
+
+### Models
+
+The model list filters as you type, and accepts a name that isn't listed.
+
+| CLI | Where the models come from |
+|---|---|
+| Claude | It has no command to list them, so it offers the aliases `fable`, `opus`, `sonnet` and `haiku` |
+| Codex | `codex debug models`, only the ones it marks as selectable |
 | OpenCode | `opencode models` |
 
-Los agentes se guardan en dos sitios, y los del proyecto ganan si coincide el ID. Un `agents.json` anterior sigue funcionando, y su campo `subagents` se ignora.
+### Skills
 
-| Dónde | Archivo |
-|---|---|
-| Global | `$XDG_CONFIG_HOME/ravex-agents/agents.json` (por defecto `~/.config`) |
-| Proyecto | `.ravex/agents.json` |
+A skill is a folder with a `SKILL.md` file, the same format the CLIs use. The form lists every skill it finds, so an agent can use one from another CLI's folder. To write your own, add it to `.ravex/skills/<name>/SKILL.md` or `~/.config/ravex-agents/skills/<name>/SKILL.md`.
+
+It looks in these folders, in this order, and the first skill with a given name wins:
+
+- In the project: `.ravex/skills`, `.agents/skills`, `.claude/skills`, `.opencode/skills`
+- In your home: `~/.config/ravex-agents/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.config/opencode/skills`
+
+The skills you choose go into the agent's instructions on every turn, up to 60,000 characters in total. Past that, the agent is told which file to read. Once you choose skills for an agent, it no longer sees the others its CLI would find. An agent that never chose keeps what its CLI finds.
+
+### Tools
+
+Every agent can read the project. Beyond that, you choose:
+
+| Tool | Claude | Codex | OpenCode |
+|---|---|---|---|
+| Edit files | Yes | Yes, through its sandbox | Yes |
+| Run commands | Yes | Always on, limited by its sandbox | Yes |
+| Search the web | Yes | Yes | Yes |
+| MCP servers | Yes | Always on | Yes |
+
+A tool that's off is removed, not just discouraged. Choosing tools also takes away everything else the CLI offers, such as starting its own subagents. An agent with neither edits nor commands can't change anything, and the orchestrator can't give it an editing task.
+
+With commands on, Claude can run any command in edit mode without asking. Only give that tool to agents you'd trust with your shell.
 
 ## Cowork
 
-**Tablero.** Un agente termina su tarea con un bloque `ravex-task` para informar de que está hecha, bloqueada o lista para revisar, además de poder dejar un comentario. Si no lo incluye, su mensaje final cuenta como resultado. Si la tarea tiene revisor, este aprueba o pide cambios, y una revisión sin veredicto nunca cuenta como aprobada. En el detalle de cada tarea puedes leer comentarios, resultado y conversación, y añadir tus propios comentarios.
+**Board.** An agent ends its task with a `ravex-task` block to say it's done, blocked or ready for review, and can leave a comment. Without one, its final message counts as the result. If the task has a reviewer, they approve or ask for changes, and a review with no verdict never counts as an approval. A task's detail shows its comments, result and conversation, and you can add your own comments.
 
-**Sala.** Es una conversación compartida con el equipo, donde también aparecen los eventos del tablero. Un agente solo responde si lo mencionas con `@id`, para no gastar la cuota de todos por cada mensaje. Los agentes pueden mencionarse entre sí, con un límite de 6 respuestas encadenadas por mensaje. Los turnos de sala siempre son de solo lectura: los cambios en archivos pasan por tareas.
+**Room.** A conversation shared with the team, which also shows board events. An agent only replies if you mention it with `@id`, so that a message doesn't spend everyone's quota. Agents can mention each other, up to 6 chained replies per message. Room turns are always read-only: changes to files go through tasks.
 
-Estas CLIs funcionan por turnos, así que los agentes se comunican entre turnos: no se interrumpen ni conversan a mitad de una ejecución.
+These CLIs work in turns, so agents talk between turns: they can't interrupt each other or converse in the middle of a run.
 
-## Permisos
+## Permissions
 
-La sesión arranca siempre en solo lectura, y aprobar un plan no da permisos. El modo real de cada turno es el más bajo de los que apliquen:
+The session always starts read-only, and approving a plan doesn't grant permissions. A turn's real mode is the lowest of those that apply:
 
-| Turno | Modo |
+| Turn | Mode |
 |---|---|
-| Orquestador, revisor o sala | Siempre solo lectura |
-| Tarea sin `edits` | Siempre solo lectura |
-| Tarea con `edits` | El más bajo entre `Ctrl+E` y el máximo del agente |
-| Chat directo con un agente | Igual, y solo lectura si otro agente está editando |
+| Orchestrator, reviewer or room | Always read-only |
+| Task without `edits` | Always read-only |
+| Task with `edits` | The lower of `Ctrl+E` and what the agent's tools allow |
+| Direct chat with an agent | The same, and read-only while another agent is editing |
 
-Cómo se aplica en cada CLI:
+How each CLI enforces it:
 
-| CLI | Solo lectura | Edición |
+| CLI | Read-only | Edit |
 |---|---|---|
 | Claude | `--permission-mode dontAsk` | `--permission-mode acceptEdits` |
 | Codex | `sandbox_mode="read-only"` | `sandbox_mode="workspace-write"` |
-| OpenCode | Agente propio limitado a leer y buscar, sin acceso a `.env` | Agente `build` |
+| OpenCode | An agent limited to reading and searching, with no access to `.env` | The `build` agent, or one with the tools you chose |
 
-`dontAsk` y `acceptEdits` aún pueden hacer lo que permitan tus propias reglas de Claude Code. Revísalas si usas reglas amplias.
+In read-only mode, Claude can still run commands that change nothing, such as `ls`, unless the agent has commands turned off. Your own Claude Code rules also still apply, so review them if they're broad.
 
-## Estado
+## State
 
-El tablero, la sala y las sesiones se guardan en `$XDG_STATE_HOME/ravex-agents/<proyecto>/` (por defecto `~/.local/state`), sin añadir nada a tu repositorio. Al reabrir, las tareas que estaban en marcha vuelven a pendientes marcadas como interrumpidas y no se relanzan solas: `Enter` las continúa. El modo de la sesión no se guarda, así que vuelve a solo lectura.
+The board, room and sessions are saved in `$XDG_STATE_HOME/ravex-agents/<project>/` (`~/.local/state` by default), and nothing is added to your repository. On reopening, tasks that were running go back to pending, marked as interrupted, and don't start by themselves: `Enter` continues them. The session's mode isn't saved, so it returns to read-only.
 
 ## Scripts
 
-| Script | Acción |
+| Script | Action |
 |---|---|
-| `bun run dev` | Ejecuta con recarga automática |
-| `bun run start` | Ejecuta sin recarga |
-| `bun run build` | Compila `dist/ravex-agents` |
-| `bun run typecheck` | Comprueba los tipos |
-| `bun test` | Ejecuta los tests |
+| `bun run dev` | Run with automatic reload |
+| `bun run start` | Run without reload |
+| `bun run build` | Compile `dist/ravex-agents` |
+| `bun run typecheck` | Check types |
+| `bun test` | Run the tests |
 
-## Añadir un proveedor
+## Adding a provider
 
-Crea un adaptador en `src/providers/` que implemente `Provider`, y añádelo a `src/providers/index.ts` y a `ProviderId`. El runner, el equipo y la UI lo tomarán desde ahí.
+Create an adapter in `src/providers/` that implements `Provider`, and add it to `src/providers/index.ts` and to `ProviderId`. The runner, the team and the UI pick it up from there.

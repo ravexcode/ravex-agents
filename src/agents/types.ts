@@ -1,4 +1,4 @@
-import type { PermissionMode, ProviderId } from "../providers/types.ts"
+import type { PermissionMode, ProviderId, ToolId } from "../providers/types.ts"
 
 export type AgentOrigin = "builtin" | "global" | "project"
 export type SavableOrigin = Exclude<AgentOrigin, "builtin">
@@ -14,6 +14,10 @@ export interface AgentDefinition {
   instructions: string
   /** The most this agent may do; the session and the task can lower it. */
   mode: PermissionMode
+  /** Everything the CLI offers when omitted. Reading the project is always allowed. */
+  tools?: ToolId[]
+  /** Names of the skills it always has. When omitted, it has whatever its CLI finds. */
+  skills?: string[]
 }
 
 export interface Agent extends AgentDefinition {
@@ -21,3 +25,8 @@ export interface Agent extends AgentDefinition {
 }
 
 export const DEFAULT_ORCHESTRATOR = "lead"
+
+/** Commands can change files just as edits can. */
+export function modeForTools(tools: ToolId[]): PermissionMode {
+  return tools.includes("edit") || tools.includes("shell") ? "edit" : "read-only"
+}

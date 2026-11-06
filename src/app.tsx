@@ -1,14 +1,16 @@
-import type { InputRenderable } from "@opentui/core"
+import { TextAttributes, type InputRenderable, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useRef, useState, useSyncExternalStore } from "react"
 import { validateAgent } from "./agents/identity.ts"
+import type { Skill } from "./agents/skills.ts"
 import type { AgentStore, LoadErrors } from "./agents/store.ts"
 import type { Agent, AgentDefinition, SavableOrigin } from "./agents/types.ts"
 import { permissionWarning, type Team } from "./core/team.ts"
 import type { ListModels } from "./providers/models.ts"
-import type { ProviderId } from "./providers/types.ts"
+import type { Provider } from "./providers/types.ts"
 import { AgentForm } from "./ui/agent-form.tsx"
 import { ChatPanel, RoomPanel } from "./ui/conversation.tsx"
+import { Prompt } from "./ui/prompt.tsx"
 import { TaskDetail } from "./ui/task-detail.tsx"
 import { TaskPanel } from "./ui/task-panel.tsx"
 import { TeamScreen } from "./ui/team-screen.tsx"
@@ -18,8 +20,10 @@ import { ACCENT, DANGER, MUTED, WARNING } from "./ui/theme.ts"
 const MIN_TASK_PANEL_TERMINAL_WIDTH = 70
 const ORCHESTRATOR_VIEW = "@orchestrator"
 const ROOM_VIEW = "@room"
-// The tabs, the input and the hints.
+// The tabs, the space under them, the prompt, the space over it and the hints.
 const MAIN_FIXED_LINES = 5
+const SCROLL_PAGE_LINES = 10
+const MODE_WIDTH = 11
 
 type Screen =
   | { kind: "main" }
@@ -31,8 +35,9 @@ type Screen =
 export interface AppProps {
   team: Team
   store: AgentStore
-  providerIds: ProviderId[]
+  providers: Provider[]
   listModels: ListModels
+  listSkills: () => Skill[]
   initialErrors?: LoadErrors
   initialNotice?: string
 }
@@ -44,7 +49,7 @@ interface Tab {
 
 /** Keeps the selected tab on screen when they don't all fit. */
 function visibleTabs(tabs: Tab[], selected: number, width: number): Tab[] {
-  const size = (tab: Tab) => tab.label.length + 3
+  const size = (tab: Tab) => tab.label.length + 2
   let used = size(tabs[selected] ?? { id: "", label: "" })
   let first = selected
   let last = selected
@@ -66,7 +71,7 @@ function visibleTabs(tabs: Tab[], selected: number, width: number): Tab[] {
   return tabs.slice(first, last + 1)
 }
 
-export function App({ team, store, providerIds, listModels, initialErrors = {}, initialNotice }: AppProps) {
+export function App({ team, store, providers, listModels, listSkills, initialErrors = {}, initialNotice }: AppProps) {
   const state = useSyncExternalStore(team.subscribe, team.getState)
   const { width, height } = useTerminalDimensions()
   const [view, setView] = useState(ORCHESTRATOR_VIEW)
@@ -80,14 +85,16 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
   // The renderable owns the text: Enter can arrive before React has seen the
   // latest keystrokes, so a controlled value could fail to clear.
   const input = useRef<InputRenderable>(null)
+  const scroll = useRef<ScrollBoxRenderable>(null)
 
   const { board, agents, orchestratorId, panes } = state
+  const providerIds = providers.map((provider) => provider.id)
   const nameOf = (id: string) => agents.find((agent) => agent.id === id)?.name ?? id
   const orchestratorPane = panes.find((pane) => pane.id === orchestratorId)
   const agentTabs = agents.filter((agent) => agent.id !== orchestratorId)
   const tabs: Tab[] = [
-    { id: ORCHESTRATOR_VIEW, label: "Orquestador" },
-    { id: ROOM_VIEW, label: "Sala" },
+    { id: ORCHESTRATOR_VIEW, label: "Orchestrator" },
+    { id: ROOM_VIEW, label: "Room" },
     ...agentTabs.map((agent) => {
       const running = panes.find((pane) => pane.id === agent.id)?.status === "running"
       return { id: agent.id, label: `${running ? "● " : ""}${agent.name}` }
@@ -113,7 +120,7 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
     try {
       store.save(definition, origin, previousOrigin)
     } catch (error) {
-      return `No se pudo guardar: ${error instanceof Error ? error.message : String(error)}`
+      return `Couldn't save: ${error instanceof Error ? error.message : String(error)}`
     }
     reload()
     setScreen({ kind: "team" })
@@ -122,9 +129,9 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
 
   const openDelete = (agent: Agent) => {
     if (agent.origin === "builtin") {
-      setNotice(`${agent.name} es un agente base. Edítalo para cambiarlo, o crea uno nuevo con n.`)
+      setNotice(`${agent.name} is built in. Edit it to change it, or press n to create your own.`)
     } else if (team.isBusy(agent.id)) {
-      setNotice(`${agent.name} está trabajando. Cancélalo primero.`)
+      setNotice(`${agent.name} is working. Cancel it first.`)
     } else {
       setNotice(undefined)
       setScreen({ kind: "confirm-delete", agent })
@@ -133,15 +140,15 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
 
   const chooseOrchestrator = (agent: Agent) => {
     if (team.isBusy(orchestratorId) || board.phase === "planning" || board.phase === "wrapping-up") {
-      setNotice("El orquestador está trabajando. Cancélalo primero.")
+      setNotice("The orchestrator is working. Cancel it first.")
       return
     }
     try {
       store.setOrchestrator(agent.id, agent.origin === "project" ? "project" : "global")
       reload()
-      setNotice(`${agent.name} es ahora el orquestador.`)
+      setNotice(`${agent.name} is now the orchestrator.`)
     } catch (error) {
-      setNotice(`No se pudo guardar: ${error instanceof Error ? error.message : String(error)}`)
+      setNotice(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -149,7 +156,7 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
     if (!selectedTask) return
     const workers = team.workers()
     if (workers.length === 0) {
-      setNotice("No hay agentes disponibles.")
+      setNotice("No agents are available.")
       return
     }
     const position = workers.findIndex((agent) => agent.id === selectedTask.assignee)
@@ -169,7 +176,7 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
       team.cancelAgent(orchestratorId)
     } else if (board.phase === "paused") {
       if (!closeArmed) {
-        setNotice("Pulsa Esc otra vez para cerrar el objetivo y cancelar lo que queda.")
+        setNotice("Press Esc again to close the goal and cancel what's left.")
         setCloseArmed(true)
         return
       }
@@ -190,11 +197,11 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
           setTeamCursor((current) => Math.max(0, Math.min(current, result.agents.length - 1)))
           setNotice(
             store.isBuiltin(screen.agent.id)
-              ? `${screen.agent.name} ha vuelto a su versión original.`
-              : `${screen.agent.name} borrado.`,
+              ? `${screen.agent.name} is back to its original version.`
+              : `Deleted ${screen.agent.name}.`,
           )
         } catch (error) {
-          setNotice(`No se pudo borrar: ${error instanceof Error ? error.message : String(error)}`)
+          setNotice(`Couldn't delete: ${error instanceof Error ? error.message : String(error)}`)
         }
         setScreen({ kind: "team" })
       } else if (key.name === "n" || key.name === "escape") {
@@ -225,11 +232,19 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
       setView(tabs[(tabIndex + step) % tabs.length]?.id ?? ORCHESTRATOR_VIEW)
     } else if (key.name === "escape") {
       handleEscape()
+    } else if (key.name === "pageup") {
+      scroll.current?.scrollBy(-SCROLL_PAGE_LINES)
+    } else if (key.name === "pagedown") {
+      scroll.current?.scrollBy(SCROLL_PAGE_LINES)
     } else if (key.ctrl && key.name === "e") {
       team.toggleMode()
     } else if (key.ctrl && key.name === "t") {
-      setNotice(undefined)
-      setPanelFocused(true)
+      if (board.tasks.length === 0) {
+        setNotice("No tasks yet.")
+      } else {
+        setNotice(undefined)
+        setPanelFocused(true)
+      }
     } else if (key.ctrl && key.name === "g") {
       setNotice(undefined)
       setScreen({ kind: "team" })
@@ -257,26 +272,22 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
     }
   }
 
-  const modeLabel = (
-    <text fg={state.mode === "edit" ? WARNING : MUTED}>{state.mode === "edit" ? " EDICIÓN" : " SOLO LECTURA"}</text>
-  )
-
   const errorLines = Object.values(errors).map((line) => (
-    <text key={line} fg={DANGER}>{` No se cargó, y guardar está bloqueado: ${line}`}</text>
+    <text key={line} fg={DANGER}>{` Not loaded, and saving is blocked: ${line}`}</text>
   ))
 
   if (screen.kind === "form") {
     const editing = screen.agent
     return (
-      <box flexDirection="column" flexGrow={1}>
-        <AgentForm
-          agent={editing}
-          providerIds={providerIds}
-          listModels={listModels}
-          onSave={(definition, origin) => saveAgent(definition, origin, editing)}
-          onCancel={() => setScreen({ kind: "team" })}
-        />
-      </box>
+      <AgentForm
+        agent={editing}
+        providerIds={providerIds}
+        lockedTools={(id) => providers.find((provider) => provider.id === id)?.lockedTools ?? []}
+        listModels={listModels}
+        listSkills={listSkills}
+        onSave={(definition, origin) => saveAgent(definition, origin, editing)}
+        onCancel={() => setScreen({ kind: "team" })}
+      />
     )
   }
 
@@ -297,7 +308,7 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
           }}
           onEdit={(agent) => {
             if (screen.kind !== "team") return
-            if (team.isBusy(agent.id)) setNotice(`${agent.name} está trabajando. Cancélalo primero.`)
+            if (team.isBusy(agent.id)) setNotice(`${agent.name} is working. Cancel it first.`)
             else setScreen({ kind: "form", agent })
           }}
           onDelete={(agent) => {
@@ -316,8 +327,8 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
         {screen.kind === "confirm-delete" && (
           <text fg={WARNING}>
             {store.isBuiltin(screen.agent.id)
-              ? ` ¿Restaurar ${screen.agent.name} a su versión original? y confirma, n cancela.`
-              : ` ¿Borrar ${screen.agent.name}? y confirma, n cancela.`}
+              ? ` Restore ${screen.agent.name} to its original version? y confirms, n cancels.`
+              : ` Delete ${screen.agent.name}? y confirms, n cancels.`}
           </text>
         )}
         {notice && <text fg={WARNING}>{` ${notice}`}</text>}
@@ -344,47 +355,56 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
   const warning =
     board.phase === "proposed" || board.phase === "paused" ? permissionWarning(state) : undefined
   const wide = width >= MIN_TASK_PANEL_TERMINAL_WIDTH
+  const hasTasks = board.tasks.length > 0
   const onOrchestrator = currentView === ORCHESTRATOR_VIEW
-  const pane = panes.find((candidate) => candidate.id === currentView)
+  const pane = panes.find((candidate) => candidate.id === currentView) ?? orchestratorPane
   const extraLines =
-    (notice ? 1 : 0) + (warning ? 1 : 0) + errorLines.length + (state.saveError ? 1 : 0)
+    (notice ? 1 : 0) + (warning && warning !== notice ? 1 : 0) + errorLines.length + (state.saveError ? 1 : 0)
 
-  const inputTitle = onOrchestrator
-    ? " Al orquestador "
+  const placeholder = onOrchestrator
+    ? "Describe a goal for the orchestrator…"
     : currentView === ROOM_VIEW
-      ? " A la sala · @nombre llama a un agente "
-      : ` A ${nameOf(currentView)} `
+      ? "Message the room. @name calls an agent…"
+      : `Message ${nameOf(currentView)}…`
 
   const hints = panelFocused
-    ? "↑/↓ mover · Enter abrir · r reasignar · Esc volver"
+    ? "↑/↓ move · Enter open · r reassign · Esc back"
     : onOrchestrator && board.phase === "proposed"
-      ? "Enter aprueba · escribe cambios · Esc descarta · ^T tareas · ^E modo"
+      ? "Enter approve · type to change · Esc discard · ^T tasks · ^E mode"
       : onOrchestrator && board.phase === "paused"
-        ? "Enter continúa · escribe qué hacer · Esc cierra el objetivo · ^T tareas"
-        : "Tab conversación · ^T tareas · ^G equipo · ^E modo · Esc cancela · ^C sale"
+        ? "Enter continue · type what to do · Esc close goal · ^T tasks"
+        : "Tab switch · ^T tasks · ^G team · ^E mode · Esc cancel · ^C quit"
 
-  const shownTabs = visibleTabs(tabs, tabIndex, Math.max(10, width - 14))
+  const shownTabs = visibleTabs(tabs, tabIndex, Math.max(10, width - MODE_WIDTH - 2))
 
   return (
-    <box flexDirection="column" flexGrow={1}>
-      <box flexDirection="row" paddingLeft={1} justifyContent="space-between" flexShrink={0}>
+    <box flexDirection="column" flexGrow={1} paddingLeft={1} paddingRight={1}>
+      <box flexDirection="row" justifyContent="space-between" marginBottom={1} flexShrink={0}>
         <text wrapMode="none">
-          {shownTabs.map((tab, position) => (
-            <span key={tab.id} fg={tab.id === currentView ? ACCENT : MUTED}>
-              {`${position > 0 ? " · " : ""}${tab.id === currentView ? tab.label.toUpperCase() : tab.label}`}
-            </span>
-          ))}
+          {shownTabs.map((tab, position) => {
+            const selected = tab.id === currentView
+            return (
+              <span key={tab.id}>
+                {position > 0 ? "  " : ""}
+                <span fg={selected ? ACCENT : MUTED} attributes={selected ? TextAttributes.BOLD : TextAttributes.NONE}>
+                  {tab.label}
+                </span>
+              </span>
+            )
+          })}
         </text>
-        {modeLabel}
+        <text fg={state.mode === "edit" ? WARNING : MUTED} flexShrink={0}>
+          {state.mode === "edit" ? "EDIT" : "READ-ONLY"}
+        </text>
       </box>
       <box flexDirection="row" flexGrow={1} flexBasis={0}>
         {(wide || !panelFocused) &&
           (currentView === ROOM_VIEW ? (
-            <RoomPanel messages={state.room} busy={state.roomBusy} nameOf={nameOf} />
+            <RoomPanel messages={state.room} busy={state.roomBusy} nameOf={nameOf} scrollRef={scroll} />
           ) : (
-            <>{(pane ?? orchestratorPane) && <ChatPanel pane={(pane ?? orchestratorPane)!} hideRoom={onOrchestrator} />}</>
+            pane && <ChatPanel pane={pane} hideRoom={onOrchestrator} scrollRef={scroll} />
           ))}
-        {(wide || panelFocused) && (
+        {((wide && hasTasks) || panelFocused) && (
           <TaskPanel
             board={board}
             cursor={cursor}
@@ -395,21 +415,18 @@ export function App({ team, store, providerIds, listModels, initialErrors = {}, 
           />
         )}
       </box>
-      <box border borderColor={panelFocused ? MUTED : ACCENT} title={inputTitle} height={3} flexShrink={0}>
-        <input
-          ref={input}
-          focused={screen.kind === "main" && !panelFocused}
-          placeholder={onOrchestrator ? "Describe un objetivo…" : "Escribe un mensaje…"}
-          onSubmit={submit}
-        />
-      </box>
+      <Prompt inputRef={input} focused={!panelFocused} placeholder={placeholder} onSubmit={submit} />
       {warning && warning !== notice && (
-        <text fg={WARNING} wrapMode="none">{` ${warning}`}</text>
+        <text fg={WARNING} wrapMode="none">
+          {warning}
+        </text>
       )}
-      {notice && <text fg={WARNING}>{` ${notice}`}</text>}
-      {state.saveError && <text fg={DANGER}>{` No se pudo guardar el estado: ${state.saveError}`}</text>}
+      {notice && <text fg={WARNING}>{notice}</text>}
+      {state.saveError && <text fg={DANGER}>{`Couldn't save the state: ${state.saveError}`}</text>}
       {errorLines}
-      <text fg={MUTED} wrapMode="none">{` ${hints}`}</text>
+      <text fg={MUTED} wrapMode="none" flexShrink={0}>
+        {hints}
+      </text>
     </box>
   )
 }

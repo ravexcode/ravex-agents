@@ -99,7 +99,7 @@ describe("planning", () => {
     expect(call.request.prompt).toBe("add a login")
     expect(call.request.mode).toBe("read-only")
     expect(call.request.instructions).toContain("own-lead")
-    expect(call.request.instructions).toContain("- a: does a (claude/a)")
+    expect(call.request.instructions).toContain("- a: does a (claude/a; tools: all)")
     expect(call.request.instructions).not.toContain("- lead:")
     expect(call.request.instructions).toContain("ravex-plan")
   })
@@ -132,7 +132,7 @@ describe("planning", () => {
     const ctx = setup()
     ctx.team.sendToOrchestrator("one")
     await settle()
-    expect(ctx.team.sendToOrchestrator("two")).toContain("trabajando")
+    expect(ctx.team.sendToOrchestrator("two")).toContain("working")
     expect(ctx.calls.length).toBe(1)
   })
 
@@ -149,7 +149,7 @@ describe("planning", () => {
     await settle()
     expect(ctx.calls.length).toBe(2)
     expect(ctx.state().board.phase).toBe("idle")
-    expect(entries(ctx.state(), "lead").join()).toContain("Plan no válido")
+    expect(entries(ctx.state(), "lead").join()).toContain("Invalid plan")
   })
 
   test("a corrected plan is accepted", async () => {
@@ -211,7 +211,7 @@ describe("planning", () => {
       await settle()
     }
     const before = ctx.calls.length
-    expect(ctx.team.sendToOrchestrator("again")).toContain("Límite")
+    expect(ctx.team.sendToOrchestrator("again")).toContain("limit")
     await settle()
     expect(ctx.calls.length).toBe(before)
   })
@@ -230,9 +230,9 @@ describe("planning", () => {
     const ctx = setup()
     await proposed(ctx, [item("x", "a", { reviewer: "b" })])
 
-    expect(ctx.team.reassign(1, "ghost")).toContain("no está disponible")
-    expect(ctx.team.reassign(1, "lead")).toContain("no está disponible")
-    expect(ctx.team.reassign(99, "b")).toContain("no existe")
+    expect(ctx.team.reassign(1, "ghost")).toContain("isn't available")
+    expect(ctx.team.reassign(1, "lead")).toContain("isn't available")
+    expect(ctx.team.reassign(99, "b")).toContain("doesn't exist")
     expect(ctx.team.reassign(1, "c")).toBeUndefined()
     expect(ctx.state().board.tasks[0]).toMatchObject({ assignee: "c", reviewer: "b" })
     expect(ctx.team.reassign(1, "b")).toBeUndefined()
@@ -243,7 +243,7 @@ describe("planning", () => {
     ctx.team.approve()
     await settle()
     expect(ctx.last("b").request.prompt).toContain("do x")
-    expect(ctx.team.reassign(1, "a")).toContain("en marcha")
+    expect(ctx.team.reassign(1, "a")).toContain("running")
   })
 
   test("warns that approving doesn't grant permissions, and it really doesn't", async () => {
@@ -251,20 +251,115 @@ describe("planning", () => {
     await proposed(ctx, [item("x", "a", { edits: true }), item("y", "b")])
     expect(tasksLimitedByMode(ctx.state()).map((task) => task.id)).toEqual([1])
 
-    expect(ctx.team.approve()).toContain("Aprobar no da permisos")
+    expect(ctx.team.approve()).toContain("Approving doesn't grant permissions")
     await settle()
     expect(ctx.last("a").request.mode).toBe("read-only")
     expect(ctx.last("a").request.instructions).toContain("read-only")
   })
 
-  test("an agent's maximum also limits what a task can do", async () => {
-    const ctx = setup(["lead", "a"])
-    ctx.team.setTeam([agent("lead", { model: "lead" }), agent("a", { model: "a", mode: "read-only" })], "lead")
+  test("rejects an editing task for an agent without the tools, and limits one reassigned to it", async () => {
+    const ctx = setup(["lead", "a", "b"])
+    ctx.team.setTeam(
+      [
+        agent("lead", { model: "lead" }),
+        agent("a", { model: "a", mode: "read-only", tools: ["web"] }),
+        agent("b", { model: "b" }),
+      ],
+      "lead",
+    )
     ctx.team.toggleMode()
-    await proposed(ctx, [item("x", "a", { edits: true })])
-    expect(ctx.team.approve()).toContain("Aprobar no da permisos")
+    ctx.team.sendToOrchestrator("goal")
+    await settle()
+    ctx.last("lead").reply(plan([item("x", "a", { edits: true })]))
+    await settle()
+    expect(ctx.last("lead").request.prompt).toContain("has no tools")
+
+    ctx.last("lead").reply(plan([item("x", "b", { edits: true })]))
+    await settle()
+    ctx.team.reassign(1, "a")
+    expect(ctx.team.approve()).toContain("Approving doesn't grant permissions")
     await settle()
     expect(ctx.last("a").request.mode).toBe("read-only")
+  })
+})
+
+describe("tools and skills", () => {
+  const custom = () => [
+    agent("lead", { model: "lead", skills: ["plan-well"] }),
+    agent("a", { model: "a", tools: ["edit", "web"], skills: ["style", "ghost"] }),
+    agent("b", { model: "b" }),
+  ]
+  const resolveSkills = (names: string[]) => ({
+    text: names.includes("style") ? "# Skill: style" : "# Skill: plan-well",
+    missing: names.filter((name) => name === "ghost"),
+  })
+
+  test("every kind of turn gets the agent's skills and tools", async () => {
+    const ctx = setup(["lead", "a", "b"], { resolveSkills })
+    ctx.team.setTeam(custom(), "lead")
+    ctx.team.toggleMode()
+
+    ctx.team.sendToAgent("a", "hi")
+    await settle()
+    expect(ctx.last("a").request.instructions).toContain("# Skill: style")
+    expect(ctx.last("a").request.instructions).toContain("own-a")
+    expect(ctx.last("a").request.tools).toEqual(["edit", "web"])
+    expect(ctx.last("a").request.nativeSkills).toBe(false)
+    ctx.last("a").reply("ok")
+    await settle()
+
+    ctx.team.sendToRoom("@a hi")
+    await settle()
+    expect(ctx.last("a").request.instructions).toContain("# Skill: style")
+    expect(ctx.last("a").request.mode).toBe("read-only")
+    ctx.last("a").reply("ok")
+    await settle()
+
+    await proposed(ctx, [item("x", "a", { reviewer: "b" })])
+    expect(ctx.last("lead").request.instructions).toContain("# Skill: plan-well")
+    ctx.team.approve()
+    await settle()
+    expect(ctx.last("a").request.instructions).toContain("# Skill: style")
+    expect(ctx.last("a").request.prompt).toContain("do x")
+  })
+
+  test("agents that don't choose skills keep the ones their CLI finds", async () => {
+    const ctx = setup(["lead", "b"], { resolveSkills })
+    ctx.team.setTeam(custom(), "lead")
+    ctx.team.sendToAgent("b", "hi")
+    await settle()
+    expect(ctx.last("b").request.nativeSkills).toBe(true)
+    expect(ctx.last("b").request.tools).toBeUndefined()
+    expect(ctx.last("b").request.instructions).toBe("own-b")
+  })
+
+  test("reports a skill that no longer exists", async () => {
+    const ctx = setup(["lead", "a"], { resolveSkills })
+    ctx.team.setTeam(custom(), "lead")
+    ctx.team.sendToAgent("a", "hi")
+    await settle()
+    expect(entries(ctx.state(), "a").join()).toContain("Skills not found: ghost")
+  })
+
+  test("tells the orchestrator what each member can do", async () => {
+    const ctx = setup(["lead", "a"], { resolveSkills })
+    ctx.team.setTeam(custom(), "lead")
+    ctx.team.sendToOrchestrator("goal")
+    await settle()
+    expect(ctx.last("lead").request.instructions).toContain("(claude/a; tools: read, edit, web; skills: style, ghost)")
+    expect(ctx.last("lead").request.instructions).toContain("- b: does b (claude/b; tools: all)")
+  })
+
+  test("changing an agent's tools or skills starts a new conversation", async () => {
+    const ctx = setup(["lead", "a"])
+    ctx.team.sendToAgent("a", "hi")
+    await settle()
+    ctx.last("a").reply("hello", "s1")
+    await settle()
+    ctx.team.setTeam([agent("lead", { model: "lead" }), agent("a", { model: "a", tools: ["web"] })], "lead")
+    ctx.team.sendToAgent("a", "again")
+    await settle()
+    expect(ctx.last("a").request.sessionId).toBeUndefined()
   })
 })
 
@@ -446,7 +541,7 @@ describe("dispatching", () => {
     await settle()
     expect(ctx.calls.length).toBe(before)
     expect(ctx.state().board.phase).toBe("paused")
-    expect(ctx.team.sendToOrchestrator("try again")).toContain("Límite")
+    expect(ctx.team.sendToOrchestrator("try again")).toContain("limit")
 
     ctx.team.closeGoal()
     expect(ctx.state().board.phase).toBe("idle")
@@ -484,7 +579,7 @@ describe("dispatching", () => {
     await approved(ctx, [item("x", "a"), item("y", "b", { dependsOn: ["x"] })])
     ctx.team.stopWork()
     await settle()
-    expect(ctx.team.resume()).toContain("No hay tareas")
+    expect(ctx.team.resume()).toContain("No tasks")
     expect(ctx.state().board.phase).toBe("paused")
 
     const other = setup()
@@ -509,7 +604,7 @@ describe("dispatching", () => {
     await settle()
     expect(statuses(ctx.state())).toEqual(["1:running"])
     expect(ctx.state().board.phase).toBe("running")
-    expect(entries(ctx.state(), "lead").join()).toContain("Plan ignorado")
+    expect(entries(ctx.state(), "lead").join()).toContain("Plan ignored")
   })
 
   test("comments reach the agent on its next turn, and agents can leave them too", async () => {
@@ -610,7 +705,7 @@ describe("review", () => {
 describe("room", () => {
   test("nobody replies without a mention, so it costs nothing", async () => {
     const ctx = setup()
-    expect(ctx.team.sendToRoom("hello everyone")).toContain("mención")
+    expect(ctx.team.sendToRoom("hello everyone")).toContain("mention")
     await settle()
     expect(ctx.calls).toEqual([])
     expect(ctx.state().room[0]).toMatchObject({ kind: "user", text: "hello everyone" })
@@ -676,7 +771,7 @@ describe("room", () => {
       await settle()
     }
     expect(ctx.calls.length).toBe(MAX_ROOM_REPLIES)
-    expect(ctx.state().room.at(-1)?.text).toContain("Límite")
+    expect(ctx.state().room.at(-1)?.text).toContain("limit")
   })
 
   test("cancelling stops the chain", async () => {
@@ -703,7 +798,7 @@ describe("room", () => {
   test("shows board events, and agents can post from a task", async () => {
     const ctx = setup()
     await approved(ctx, [item("x", "a")])
-    expect(ctx.state().room.at(-1)?.text).toContain("A empieza la tarea 1")
+    expect(ctx.state().room.at(-1)?.text).toContain("A started task 1")
     ctx.last("a").reply('Ok.\n```ravex-task\n{"status":"done","summary":"s","room":"Hey @b look"}\n```')
     await settle()
     expect(ctx.state().room.some((message) => message.kind === "agent" && message.text === "Hey @b look")).toBe(true)
@@ -733,7 +828,7 @@ describe("direct chat", () => {
     ctx.team.sendToAgent("b", "hi")
     await settle()
     expect(ctx.last("b").request.mode).toBe("read-only")
-    expect(entries(ctx.state(), "b").join()).toContain("solo lectura")
+    expect(entries(ctx.state(), "b").join()).toContain("read-only")
   })
 
   test("an editing chat holds back editing tasks until it finishes", async () => {
@@ -795,7 +890,7 @@ describe("persistence", () => {
     expect(reopened.calls).toEqual([])
 
     // The session's mode isn't restored, so an edit doesn't resume with more than was asked for.
-    expect(reopened.team.resume()).toContain("Continuar no da permisos")
+    expect(reopened.team.resume()).toContain("Continuing doesn't grant permissions")
     await settle()
     expect(reopened.last("a").request.mode).toBe("read-only")
     expect(reopened.last("a").request.prompt).toContain("Your task #1")

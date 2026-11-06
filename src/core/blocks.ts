@@ -8,19 +8,31 @@ export interface ParsedBlock {
 }
 
 /**
- * Reads a fenced JSON block from the end of a message. Only a block that ends
- * the message counts, so an agent can discuss or quote the format safely.
+ * Reads a fenced JSON block, normally the one that ends the message. Models
+ * sometimes add a closing remark after it, so a later block also counts if it
+ * sits on its own lines and holds valid JSON, which excludes most quoted examples.
  */
-export function parseTrailingBlock(message: string, tag: string): ParsedBlock | null {
-  const pattern = new RegExp("```" + tag + "[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?```\\s*$")
-  const match = pattern.exec(message)
-  if (!match) return null
+export function parseBlock(message: string, tag: string): ParsedBlock | null {
+  const trailing = new RegExp("```" + tag + "[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n?```\\s*$").exec(message)
+  if (trailing) {
+    const text = message.slice(0, trailing.index).trimEnd()
+    try {
+      return { text, data: JSON.parse(trailing[1] ?? "") }
+    } catch {
+      return { text, error: `The ${tag} block isn't valid JSON.` }
+    }
+  }
 
-  const text = message.slice(0, match.index).trimEnd()
+  const standalone = new RegExp("^```" + tag + "[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*$", "gm")
+  const last = [...message.matchAll(standalone)].at(-1)
+  if (!last) return null
   try {
-    return { text, data: JSON.parse(match[1] ?? "") }
+    const data: unknown = JSON.parse(last[1] ?? "")
+    const before = message.slice(0, last.index).trimEnd()
+    const after = message.slice(last.index + last[0].length).trim()
+    return { text: [before, after].filter(Boolean).join("\n\n"), data }
   } catch {
-    return { text, error: `The ${tag} block isn't valid JSON.` }
+    return null
   }
 }
 

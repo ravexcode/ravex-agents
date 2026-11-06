@@ -2,24 +2,23 @@ import type { InputRenderable, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { slugify } from "../agents/identity.ts"
+import type { Skill } from "../agents/skills.ts"
 import { AGENT_TEMPLATES } from "../agents/templates.ts"
-import type { Agent, AgentDefinition, SavableOrigin } from "../agents/types.ts"
+import { modeForTools, type Agent, type AgentDefinition, type SavableOrigin } from "../agents/types.ts"
 import type { ListModels } from "../providers/models.ts"
-import type { PermissionMode, ProviderId } from "../providers/types.ts"
-import { ACCENT, DANGER, fit, MUTED, TEXT } from "./theme.ts"
+import { TOOL_IDS, type ProviderId, type ToolId } from "../providers/types.ts"
+import { ACCENT, DANGER, fit, MUTED, TEXT, TOOL_LABELS } from "./theme.ts"
 
 const LABEL_WIDTH = 14
 const INSTRUCTIONS_HEIGHT = 5
-// Every line of the screen other than the model list, including an error.
-const FIXED_LINES = 12 + INSTRUCTIONS_HEIGHT
-const MIN_PICKER_LINES = 3
-const MAX_PICKER_LINES = 8
-const MODES: PermissionMode[] = ["read-only", "edit"]
-const MODE_LABELS: Record<PermissionMode, string> = { "read-only": "solo lectura", edit: "edición" }
+// Every line of the screen other than the open list, including an error.
+const FIXED_LINES = 15 + INSTRUCTIONS_HEIGHT
+const MIN_LIST_LINES = 3
+const MAX_LIST_LINES = 8
 const ORIGINS: SavableOrigin[] = ["global", "project"]
-const ORIGIN_LABELS: Record<SavableOrigin, string> = { global: "global", project: "este proyecto" }
+const ORIGIN_LABELS: Record<SavableOrigin, string> = { global: "global", project: "this project" }
 
-type Field = "template" | "name" | "description" | "provider" | "model" | "mode" | "origin" | "instructions"
+type Field = "template" | "name" | "description" | "provider" | "model" | "skills" | "tools" | "instructions" | "origin"
 type Catalog = { status: "loading" } | { status: "ready"; models: string[] } | { status: "failed" }
 interface ModelOption {
   label: string
@@ -27,25 +26,25 @@ interface ModelOption {
   value: string
 }
 
-const DEFAULT_OPTION: ModelOption = { label: "Por defecto de la CLI", value: "" }
+const DEFAULT_OPTION: ModelOption = { label: "CLI default", value: "" }
 
 function cycle<T>(values: readonly T[], current: T, step: number): T {
   const position = values.indexOf(current)
   return values[(position + step + values.length) % values.length] ?? current
 }
 
-function buildOptions(models: string[], query: string, filtering: boolean, current: string): ModelOption[] {
+function buildOptions(models: string[], query: string, filtering: boolean): ModelOption[] {
   const toOption = (model: string): ModelOption => ({ label: model, value: model })
   if (!filtering) {
-    const known = !current || models.includes(current)
-    return [DEFAULT_OPTION, ...(known ? [] : [toOption(current)]), ...models.map(toOption)]
+    const known = !query || models.includes(query)
+    return [DEFAULT_OPTION, ...(known ? [] : [toOption(query)]), ...models.map(toOption)]
   }
   const search = query.trim().toLowerCase()
   const matches = models.filter((model) => model.toLowerCase().includes(search)).map(toOption)
   if (!search) return [DEFAULT_OPTION, ...matches]
   // The list can be incomplete, or missing if the command failed, so any name is allowed.
   const exact = models.some((model) => model.toLowerCase() === search)
-  return [...matches, ...(exact ? [] : [{ label: `Usar "${query.trim()}"`, value: query.trim() }])]
+  return [...matches, ...(exact ? [] : [{ label: `Use "${query.trim()}"`, value: query.trim() }])]
 }
 
 function Row({ label, focused, children }: { label: string; focused: boolean; children: React.ReactNode }) {
@@ -63,17 +62,37 @@ function Choice({ value, focused }: { value: string; focused: boolean }) {
   return <text fg={focused ? ACCENT : TEXT}>{focused ? `◂ ${value} ▸` : value}</text>
 }
 
+/** A window over a long list, with the position to show that it continues. */
+function ListWindow({ count, cursor, lines, children }: {
+  count: number
+  cursor: number
+  lines: number
+  children: (start: number, end: number) => React.ReactNode
+}) {
+  const overflows = count > lines
+  const visible = overflows ? lines - 1 : lines
+  const start = Math.max(0, Math.min(cursor, count - visible))
+  return (
+    <box flexDirection="column" paddingLeft={LABEL_WIDTH} flexShrink={0}>
+      {children(start, start + visible)}
+      {overflows && <text fg={MUTED}>{`${cursor + 1}/${count}`}</text>}
+    </box>
+  )
+}
+
 export interface AgentFormProps {
   /** The agent to edit, or undefined to create one. */
   agent?: Agent
   providerIds: ProviderId[]
+  lockedTools: (provider: ProviderId) => ToolId[]
   listModels: ListModels
+  listSkills: () => Skill[]
   /** Returns an error message if the agent can't be saved. */
   onSave: (definition: AgentDefinition, origin: SavableOrigin) => string | undefined
   onCancel: () => void
 }
 
-export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: AgentFormProps) {
+export function AgentForm({ agent, providerIds, lockedTools, listModels, listSkills, onSave, onCancel }: AgentFormProps) {
   const { height, width } = useTerminalDimensions()
   const isNew = agent === undefined
   const fields: Field[] = [
@@ -82,34 +101,49 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
     "description",
     "provider",
     "model",
-    "mode",
-    "origin",
+    "skills",
+    "tools",
     "instructions",
+    "origin",
   ]
 
   const [focus, setFocus] = useState<Field>(fields[0] ?? "name")
   const [templateIndex, setTemplateIndex] = useState(0)
   const [provider, setProvider] = useState<ProviderId>(agent?.provider ?? providerIds[0] ?? "claude")
-  // New agents can't change anything until someone chooses otherwise.
-  const [mode, setMode] = useState<PermissionMode>(agent?.mode ?? "read-only")
   const [origin, setOrigin] = useState<SavableOrigin>(agent?.origin === "project" ? "project" : "global")
   const [error, setError] = useState<string>()
 
   const [catalog, setCatalog] = useState<Catalog>({ status: "loading" })
-  const [query, setQuery] = useState(agent?.model ?? "")
+  const [modelQuery, setModelQuery] = useState(agent?.model ?? "")
   const [filtering, setFiltering] = useState(false)
-  const [pickerCursor, setPickerCursor] = useState(0)
+  const [modelCursor, setModelCursor] = useState(0)
+
+  // New agents can't change anything until someone chooses otherwise.
+  const [tools, setTools] = useState<ToolId[]>(
+    agent?.tools ?? (agent ? (agent.mode === "edit" ? [...TOOL_IDS] : []) : []),
+  )
+  const [toolsTouched, setToolsTouched] = useState(false)
+  const [toolCursor, setToolCursor] = useState(0)
+
+  const availableSkills = useMemo(listSkills, [listSkills])
+  const [skills, setSkills] = useState<string[]>(agent?.skills ?? [])
+  const [skillsTouched, setSkillsTouched] = useState(false)
+  const [skillQuery, setSkillQuery] = useState("")
+  const [skillCursor, setSkillCursor] = useState(0)
 
   // These renderables own their text, so a template change remounts them with new content.
   const name = useRef<InputRenderable>(null)
   const description = useRef<InputRenderable>(null)
   const model = useRef<InputRenderable>(null)
+  const skillFilter = useRef<InputRenderable>(null)
   const instructions = useRef<TextareaRenderable>(null)
   // Setting the field from the list also fires its input event, which isn't the user typing.
   const programmaticValue = useRef<string | undefined>(undefined)
 
   const template = AGENT_TEMPLATES[templateIndex]
   const initial = agent ?? template
+  const locked = lockedTools(provider)
+  const selectableTools = TOOL_IDS.filter((tool) => !locked.includes(tool))
   const moveFocus = (step: number) => setFocus((current) => cycle(fields, current, step))
 
   useEffect(() => {
@@ -128,24 +162,34 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
     }
   }, [provider, listModels])
 
-  const options = useMemo(
-    () => buildOptions(catalog.status === "ready" ? catalog.models : [], query, filtering, query),
-    [catalog, query, filtering],
+  const modelOptions = useMemo(
+    () => buildOptions(catalog.status === "ready" ? catalog.models : [], modelQuery, filtering),
+    [catalog, modelQuery, filtering],
   )
 
   // Without a filter, the list opens on the agent's current model.
   useEffect(() => {
-    if (filtering) {
-      setPickerCursor(0)
-      return
-    }
-    setPickerCursor(Math.max(0, options.findIndex((option) => option.value === query)))
-  }, [options, filtering, query])
+    setModelCursor(filtering ? 0 : Math.max(0, modelOptions.findIndex((option) => option.value === modelQuery)))
+  }, [modelOptions, filtering, modelQuery])
+
+  const skillOptions = useMemo(() => {
+    const search = skillQuery.trim().toLowerCase()
+    const matches = search
+      ? availableSkills.filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(search))
+      : availableSkills
+    // Chosen ones go first, so that they're easy to review. Missing ones stay removable.
+    const known = new Set(availableSkills.map((skill) => skill.name))
+    const gone = skills.filter((skill) => !known.has(skill)).map((skill) => ({ name: skill, description: "not found", path: "" }))
+    return [...gone, ...matches].sort((a, b) => Number(skills.includes(b.name)) - Number(skills.includes(a.name)))
+    // Re-sorting while toggling would move the row out from under the cursor.
+  }, [availableSkills, skillQuery])
+
+  useEffect(() => setSkillCursor(0), [skillQuery])
 
   const setModelField = (value: string) => {
     programmaticValue.current = value
     if (model.current) model.current.value = value
-    setQuery(value)
+    setModelQuery(value)
     setFiltering(false)
   }
 
@@ -153,11 +197,36 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
     setProvider((current) => cycle(providerIds, current, step))
     // One provider's model means nothing to another.
     setModelField("")
+    setToolCursor(0)
+  }
+
+  const changeTemplate = (step: number) => {
+    const next = (templateIndex + step + AGENT_TEMPLATES.length) % AGENT_TEMPLATES.length
+    setTemplateIndex(next)
+    setTools(AGENT_TEMPLATES[next]?.tools ?? [])
+  }
+
+  const toggleTool = () => {
+    const tool = selectableTools[toolCursor]
+    if (!tool) return
+    setToolsTouched(true)
+    setTools((current) => (current.includes(tool) ? current.filter((other) => other !== tool) : [...current, tool]))
+  }
+
+  const toggleSkill = () => {
+    const skill = skillOptions[skillCursor]?.name
+    if (!skill) return
+    setSkillsTouched(true)
+    setSkills((current) => (current.includes(skill) ? current.filter((other) => other !== skill) : [...current, skill]))
   }
 
   const save = () => {
     const nameValue = name.current?.value.trim() ?? ""
     const modelValue = model.current?.value.trim()
+    // An agent that never chose keeps what its CLI gives it by default.
+    const keepsToolDefaults = agent !== undefined && agent.tools === undefined && !toolsTouched
+    const keepsSkillDefaults = agent !== undefined && agent.skills === undefined && !skillsTouched
+    const chosenTools = TOOL_IDS.filter((tool) => tools.includes(tool) && !locked.includes(tool))
     const definition: AgentDefinition = {
       id: agent?.id ?? slugify(nameValue),
       name: nameValue,
@@ -165,7 +234,9 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
       provider,
       ...(modelValue ? { model: modelValue } : {}),
       instructions: instructions.current?.plainText.trim() ?? "",
-      mode,
+      mode: keepsToolDefaults ? agent.mode : modeForTools(chosenTools),
+      ...(keepsToolDefaults ? {} : { tools: chosenTools }),
+      ...(keepsSkillDefaults ? {} : { skills }),
     }
     setError(onSave(definition, origin))
   }
@@ -179,43 +250,44 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
       moveFocus(key.shift ? -1 : 1)
     } else if (key.name === "left" || key.name === "right") {
       const step = key.name === "left" ? -1 : 1
-      if (focus === "template") {
-        setTemplateIndex((current) => (current + step + AGENT_TEMPLATES.length) % AGENT_TEMPLATES.length)
-      } else if (focus === "provider") {
-        changeProvider(step)
-      } else if (focus === "mode") {
-        setMode((current) => cycle(MODES, current, step))
-      } else if (focus === "origin") {
-        setOrigin((current) => cycle(ORIGINS, current, step))
-      }
-    } else if (focus === "model" && (key.name === "up" || key.name === "down") && options.length > 0) {
+      if (focus === "template") changeTemplate(step)
+      else if (focus === "provider") changeProvider(step)
+      else if (focus === "origin") setOrigin((current) => cycle(ORIGINS, current, step))
+    } else if (key.name === "up" || key.name === "down") {
       const step = key.name === "up" ? -1 : 1
-      setPickerCursor((current) => (current + step + options.length) % options.length)
+      if (focus === "model" && modelOptions.length > 0) {
+        setModelCursor((current) => (current + step + modelOptions.length) % modelOptions.length)
+      } else if (focus === "skills" && skillOptions.length > 0) {
+        setSkillCursor((current) => (current + step + skillOptions.length) % skillOptions.length)
+      } else if (focus === "tools" && selectableTools.length > 0) {
+        setToolCursor((current) => (current + step + selectableTools.length) % selectableTools.length)
+      }
+    } else if (focus === "tools" && (key.name === "space" || key.name === "return" || key.name === "enter")) {
+      toggleTool()
     }
   })
 
-  const pickerLines = Math.min(MAX_PICKER_LINES, Math.max(MIN_PICKER_LINES, height - FIXED_LINES))
-  const overflows = options.length > pickerLines
-  // One line goes to the position, which shows that the list continues.
-  const visibleOptions = overflows ? pickerLines - 1 : pickerLines
-  const windowStart = Math.max(0, Math.min(pickerCursor, options.length - visibleOptions))
+  const listLines = Math.min(MAX_LIST_LINES, Math.max(MIN_LIST_LINES, height - FIXED_LINES))
+  const rowWidth = Math.max(10, width - LABEL_WIDTH - 8)
+
+  const hints: Partial<Record<Field, string>> = {
+    model: "Type to filter · ↑/↓ choose · Enter confirm",
+    skills: "Type to filter · ↑/↓ move · Enter toggle",
+    tools: "↑/↓ move · Space toggle",
+  }
 
   return (
-    <box
-      flexGrow={1}
-      flexDirection="column"
-      border
-      borderColor={ACCENT}
-      title={isNew ? " Nuevo agente " : ` Editar ${agent.name} `}
-      paddingLeft={1}
-      paddingRight={1}
-    >
+    <box flexGrow={1} flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <text fg={ACCENT} flexShrink={0}>
+        {isNew ? "New agent" : `Edit ${agent.name}`}
+      </text>
+      <box height={1} flexShrink={0} />
       {isNew && (
-        <Row label="Plantilla" focused={focus === "template"}>
+        <Row label="Template" focused={focus === "template"}>
           <Choice value={template?.label ?? ""} focused={focus === "template"} />
         </Row>
       )}
-      <Row label="Nombre" focused={focus === "name"}>
+      <Row label="Name" focused={focus === "name"}>
         <input
           key={`name-${templateIndex}`}
           ref={name}
@@ -226,64 +298,128 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
           onSubmit={() => moveFocus(1)}
         />
       </Row>
-      <Row label="Descripción" focused={focus === "description"}>
+      <Row label="Description" focused={focus === "description"}>
         <input
           key={`description-${templateIndex}`}
           ref={description}
           flexGrow={1}
           value={initial?.description ?? ""}
-          placeholder="Qué debería asignarle el orquestador"
+          placeholder="What the orchestrator should assign to it"
           focused={focus === "description"}
           onSubmit={() => moveFocus(1)}
         />
       </Row>
-      <Row label="Proveedor" focused={focus === "provider"}>
+      <Row label="Provider" focused={focus === "provider"}>
         <Choice value={provider} focused={focus === "provider"} />
       </Row>
-      <Row label="Modelo" focused={focus === "model"}>
+      <Row label="Model" focused={focus === "model"}>
         <input
           ref={model}
           flexGrow={1}
           value={agent?.model ?? ""}
-          placeholder="Por defecto de la CLI · escribe para buscar"
+          placeholder="CLI default · type to search"
           focused={focus === "model"}
           onInput={(value) => {
             if (value === programmaticValue.current) return
             programmaticValue.current = undefined
-            setQuery(value)
+            setModelQuery(value)
             setFiltering(true)
           }}
           onSubmit={() => {
-            const option = options[pickerCursor]
+            const option = modelOptions[modelCursor]
             if (option) setModelField(option.value)
             moveFocus(1)
           }}
         />
       </Row>
       {focus === "model" && (
-        <box flexDirection="column" paddingLeft={LABEL_WIDTH} flexShrink={0}>
-          {catalog.status === "loading" && <text fg={MUTED}>Cargando modelos…</text>}
-          {catalog.status === "failed" && (
-            <text fg={MUTED}>No se pudo leer la lista de modelos. Escribe el nombre a mano.</text>
+        <ListWindow count={modelOptions.length} cursor={modelCursor} lines={listLines}>
+          {(start, end) => (
+            <>
+              {catalog.status === "loading" && <text fg={MUTED}>Loading models…</text>}
+              {catalog.status === "failed" && <text fg={MUTED}>Couldn't read the model list. Type a name instead.</text>}
+              {modelOptions.slice(start, end).map((option, position) => {
+                const selected = start + position === modelCursor
+                return (
+                  <text key={option.label} fg={selected ? ACCENT : TEXT} wrapMode="none">
+                    {`${selected ? "▸" : " "} ${fit(option.label, rowWidth)}`}
+                  </text>
+                )
+              })}
+            </>
           )}
-          {options.slice(windowStart, windowStart + visibleOptions).map((option, position) => {
-            const selected = windowStart + position === pickerCursor
+        </ListWindow>
+      )}
+      <Row label="Skills" focused={focus === "skills"}>
+        {focus === "skills" ? (
+          <input
+            ref={skillFilter}
+            flexGrow={1}
+            placeholder={availableSkills.length ? `Search ${availableSkills.length} skills` : "No skills found"}
+            focused
+            onInput={setSkillQuery}
+            onSubmit={toggleSkill}
+          />
+        ) : (
+          <text fg={TEXT} wrapMode="none">
+            {fit(
+              skills.length
+                ? skills.join(", ")
+                : agent && agent.skills === undefined && !skillsTouched
+                  ? "What its CLI finds"
+                  : "None",
+              rowWidth,
+            )}
+          </text>
+        )}
+      </Row>
+      {focus === "skills" && (
+        <ListWindow count={skillOptions.length} cursor={skillCursor} lines={listLines}>
+          {(start, end) =>
+            skillOptions.slice(start, end).map((skill, position) => {
+              const selected = start + position === skillCursor
+              const box = skills.includes(skill.name) ? "[x]" : "[ ]"
+              return (
+                <text key={skill.name} fg={selected ? ACCENT : TEXT} wrapMode="none">
+                  {`${selected ? "▸" : " "} ${box} ${fit(`${skill.name} · ${skill.description}`, rowWidth)}`}
+                </text>
+              )
+            })
+          }
+        </ListWindow>
+      )}
+      <Row label="Tools" focused={focus === "tools"}>
+        {focus === "tools" ? (
+          <text fg={MUTED}>Reading the project is always allowed</text>
+        ) : (
+          <text fg={TEXT} wrapMode="none">
+            {fit(
+              ["read", ...TOOL_IDS.filter((tool) => tools.includes(tool) && !locked.includes(tool))].join(", "),
+              rowWidth,
+            )}
+          </text>
+        )}
+      </Row>
+      {focus === "tools" && (
+        <box flexDirection="column" paddingLeft={LABEL_WIDTH} flexShrink={0}>
+          {TOOL_IDS.map((tool) => {
+            if (locked.includes(tool)) {
+              return (
+                <text key={tool} fg={MUTED} wrapMode="none">
+                  {`  [x] ${TOOL_LABELS[tool]} (always on in ${provider}, within its sandbox)`}
+                </text>
+              )
+            }
+            const selected = selectableTools[toolCursor] === tool
             return (
-              <text key={option.label} fg={selected ? ACCENT : TEXT} wrapMode="none">
-                {`${selected ? "▸" : " "} ${fit(option.label, Math.max(10, width - LABEL_WIDTH - 8))}`}
+              <text key={tool} fg={selected ? ACCENT : TEXT} wrapMode="none">
+                {`${selected ? "▸" : " "} ${tools.includes(tool) ? "[x]" : "[ ]"} ${TOOL_LABELS[tool]}`}
               </text>
             )
           })}
-          {overflows && <text fg={MUTED}>{`${pickerCursor + 1}/${options.length}`}</text>}
         </box>
       )}
-      <Row label="Modo máximo" focused={focus === "mode"}>
-        <Choice value={MODE_LABELS[mode]} focused={focus === "mode"} />
-      </Row>
-      <Row label="Guardar en" focused={focus === "origin"}>
-        <Choice value={ORIGIN_LABELS[origin]} focused={focus === "origin"} />
-      </Row>
-      <Row label="Instrucciones" focused={focus === "instructions"}>
+      <Row label="Instructions" focused={focus === "instructions"}>
         <textarea
           key={`instructions-${templateIndex}`}
           ref={instructions}
@@ -294,16 +430,17 @@ export function AgentForm({ agent, providerIds, listModels, onSave, onCancel }: 
           backgroundColor="#1F2229"
           focusedBackgroundColor="#262A33"
           initialValue={initial?.instructions ?? ""}
-          placeholder="Cómo debería trabajar este agente"
+          placeholder="How this agent should work"
           focused={focus === "instructions"}
         />
       </Row>
+      <Row label="Save to" focused={focus === "origin"}>
+        <Choice value={ORIGIN_LABELS[origin]} focused={focus === "origin"} />
+      </Row>
       {error && <text fg={DANGER}>{error}</text>}
       <box flexGrow={1} />
-      <text fg={MUTED}>
-        {focus === "model"
-          ? "Escribe para filtrar · ↑/↓ elegir · Enter confirmar · Tab siguiente · Ctrl+S guardar · Esc cancelar"
-          : "Tab siguiente · ←/→ cambiar · Ctrl+S guardar · Esc cancelar"}
+      <text fg={MUTED} wrapMode="none" flexShrink={0}>
+        {`${hints[focus] ?? "←/→ change"} · Tab next · Ctrl+S save · Esc cancel`}
       </text>
     </box>
   )

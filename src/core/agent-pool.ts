@@ -61,7 +61,7 @@ interface Runtime {
 
 /** A definition change that a resumed conversation wouldn't pick up. */
 function conversationKey(agent: Agent): string {
-  return JSON.stringify([agent.provider, agent.model, agent.instructions])
+  return JSON.stringify([agent.provider, agent.model, agent.instructions, agent.tools, agent.skills])
 }
 
 function waitOrAbort(promise: Promise<void>, signal: AbortSignal): Promise<void> {
@@ -232,6 +232,8 @@ export class AgentPool {
         sessionId: options.sessionKey ? runtime.sessions.get(options.sessionKey) : undefined,
         model: agent.model,
         instructions: options.instructions || undefined,
+        tools: agent.tools,
+        nativeSkills: agent.skills === undefined,
       },
       (event) => this.#handleEvent(agent.id, runtime, event),
       signal,
