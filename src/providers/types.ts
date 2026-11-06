@@ -28,7 +28,11 @@ export type ProviderEvent =
   | { type: "session"; sessionId: string }
   | { type: "text-start" }
   | { type: "text-delta"; text: string }
+  | { type: "thinking-start" }
+  /** Often empty: some models only report that they're thinking. */
+  | { type: "thinking-delta"; text: string }
   | { type: "tool"; name: string; detail?: string }
+  | { type: "tool-end" }
   | { type: "error"; message: string; fatal: boolean }
 
 /** Adapts one agent CLI: how to invoke it and how to read its JSONL output. */

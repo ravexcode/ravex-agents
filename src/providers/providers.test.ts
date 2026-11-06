@@ -196,6 +196,19 @@ describe("claude.parseLine", () => {
         line({ type: "assistant", message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "a.ts" } }] } }),
       ),
     ).toEqual([{ type: "tool", name: "Read", detail: "a.ts" }])
+    expect(
+      claude.parseLine(
+        line({ type: "stream_event", event: { type: "content_block_start", content_block: { type: "thinking" } } }),
+      ),
+    ).toEqual([{ type: "thinking-start" }])
+    expect(
+      claude.parseLine(
+        line({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "hmm" } } }),
+      ),
+    ).toEqual([{ type: "thinking-delta", text: "hmm" }])
+    expect(claude.parseLine(line({ type: "user", message: { content: [{ type: "tool_result" }] } }))).toEqual([
+      { type: "tool-end" },
+    ])
   })
 
   test("ignores subagent output", () => {
@@ -229,6 +242,13 @@ describe("codex.parseLine", () => {
     expect(
       codex.parseLine(line({ type: "item.started", item: { type: "command_execution", command: "ls" } })),
     ).toEqual([{ type: "tool", name: "shell", detail: "ls" }])
+    expect(codex.parseLine(line({ type: "item.completed", item: { type: "command_execution" } }))).toEqual([
+      { type: "tool-end" },
+    ])
+    expect(codex.parseLine(line({ type: "item.completed", item: { type: "reasoning", text: "hmm" } }))).toEqual([
+      { type: "thinking-start" },
+      { type: "thinking-delta", text: "hmm" },
+    ])
   })
 
   test("treats only turn.failed as fatal", () => {
@@ -254,7 +274,11 @@ describe("opencode.parseLine", () => {
       opencode.parseLine(
         line({ type: "tool_use", part: { tool: "read", state: { input: { path: "data.txt" } } } }),
       ),
-    ).toEqual([{ type: "tool", name: "read", detail: "data.txt" }])
+    ).toEqual([{ type: "tool", name: "read", detail: "data.txt" }, { type: "tool-end" }])
+    expect(opencode.parseLine(line({ type: "reasoning", part: { text: "hmm" } }))).toEqual([
+      { type: "thinking-start" },
+      { type: "thinking-delta", text: "hmm" },
+    ])
     expect(opencode.parseLine(line({ type: "error", error: { message: "Model unavailable" } }))).toEqual([
       { type: "error", fatal: true, message: "Model unavailable" },
     ])
@@ -267,4 +291,10 @@ test("parsers ignore lines that aren't JSON objects", () => {
     expect(provider.parseLine("42")).toEqual([])
     expect(provider.parseLine("")).toEqual([])
   }
+})
+
+test("each CLI is asked for its reasoning", () => {
+  const request = { prompt: "hi", cwd: "/repo", mode: "read-only" as const }
+  expect(claude.buildArgs(request).join(" ")).toContain("--thinking-display summarized")
+  expect(opencode.buildArgs(request)).toContain("--thinking")
 })

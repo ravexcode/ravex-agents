@@ -88,6 +88,7 @@ export const opencode: Provider = {
       "--standalone",
       "--format",
       "json",
+      "--thinking",
       // Always explicit because a resumed session otherwise keeps its last agent.
       "--agent",
       agentFor({ mode, tools }),
@@ -109,6 +110,9 @@ export const opencode: Provider = {
           : []
       case "text":
         return [{ type: "text-start" }, { type: "text-delta", text: String(event.part?.text ?? "") }]
+      case "reasoning":
+        return [{ type: "thinking-start" }, { type: "thinking-delta", text: String(event.part?.text ?? "") }]
+      // It only reports a tool once the tool has finished.
       case "tool_use":
         return [
           {
@@ -116,6 +120,7 @@ export const opencode: Provider = {
             name: String(event.part?.tool ?? "tool"),
             detail: summarizeInput(event.part?.state?.input),
           },
+          { type: "tool-end" },
         ]
       case "error":
         return [{ type: "error", fatal: true, message: String(event.error?.message ?? "OpenCode failed") }]

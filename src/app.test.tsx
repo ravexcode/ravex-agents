@@ -386,6 +386,121 @@ test("in the room, only a mention spends anything", () =>
     expect(screen).not.toContain("is replying")
   }))
 
+const emit = (call: Call, ...events: ProviderEvent[]) =>
+  act(async () => {
+    for (const event of events) call.emit(event)
+    await Bun.sleep(SETTLE_MS)
+  })
+
+test("a conversation shows thinking, tools and the reply as they arrive", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Look around")
+    await ctx.enter()
+    const call = ctx.calls[0] as Call
+    expect(await ctx.frame()).toContain("Working…")
+
+    await emit(call, { type: "thinking-start" })
+    expect(await ctx.frame()).toContain("Thinking…")
+    await emit(call, { type: "thinking-delta", text: "Maybe the " }, { type: "thinking-delta", text: "tests" })
+    expect(await ctx.frame()).toContain("✻ Maybe the tests")
+
+    await emit(call, { type: "tool", name: "Read", detail: "a.ts" })
+    let screen = await ctx.frame()
+    expect(screen).toContain("◆ Read: a.ts")
+    expect(screen).toContain("Running Read…")
+    await emit(call, { type: "tool-end" })
+    expect(await ctx.frame()).toContain("Working…")
+
+    await emit(call, { type: "text-start" }, { type: "text-delta", text: "Half a " })
+    screen = await ctx.frame()
+    expect(screen).toContain("Half a")
+    expect(screen).toContain("Responding…")
+    await emit(call, { type: "text-delta", text: "reply" })
+    expect(await ctx.frame()).toContain("Half a reply")
+
+    await act(async () => {
+      call.finish()
+      await Bun.sleep(SETTLE_MS)
+    })
+    screen = await ctx.frame()
+    expect(screen).toContain("✻ Maybe the tests")
+    expect(screen).not.toContain("Responding…")
+  }))
+
+test("thinking without text only changes the spinner", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Look around")
+    await ctx.enter()
+    await emit(ctx.calls[0] as Call, { type: "thinking-start" }, { type: "thinking-delta", text: "" })
+    const screen = await ctx.frame()
+    expect(screen).toContain("Thinking…")
+    expect(screen).not.toContain("✻")
+  }))
+
+test("thinking is never taken for the agent's answer", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Add rate limiting")
+    await ctx.enter()
+    const call = ctx.calls[0] as Call
+    await emit(call, { type: "thinking-delta", text: "Let me plan" })
+    await ctx.reply(call, plan([task("a", "codex")]))
+    expect(await ctx.frame()).toContain("Proposed 1 task")
+  }))
+
+test("a team block stays hidden while it's being written", () =>
+  withApp(async (ctx) => {
+    await ctx.type("Add rate limiting")
+    await ctx.enter()
+    await emit(ctx.calls[0] as Call, { type: "text-start" }, { type: "text-delta", text: 'Here.\n```ravex-plan\n{"tasks":' })
+    const screen = await ctx.frame()
+    expect(screen).toContain("Here.")
+    expect(screen).not.toContain("ravex-plan")
+    expect(screen).not.toContain('{"tasks"')
+  }))
+
+test("the room shows a reply as it arrives", () =>
+  withApp(async (ctx) => {
+    await ctx.press("TAB")
+    await ctx.type("@codex what do you think")
+    await ctx.enter()
+    const call = ctx.calls[0] as Call
+    await emit(call, { type: "text-start" }, { type: "text-delta", text: "So far" })
+    expect(await ctx.frame()).toContain("Codex: So far")
+    await emit(call, { type: "text-delta", text: " so good" })
+    await act(async () => {
+      call.finish()
+      await Bun.sleep(SETTLE_MS)
+    })
+    const screen = await ctx.frame()
+    expect(screen).toContain("Codex: So far so good")
+    expect(screen).not.toContain("is replying")
+  }))
+
+const BRAILLE = /[\u2801-\u28ff]/
+
+test("the logo sits behind the conversation, and text covers it", () =>
+  withApp(async (ctx) => {
+    expect(await ctx.frame()).toMatch(BRAILLE)
+
+    const words = Array.from({ length: 300 }, () => "word").join(" ")
+    await ctx.type("Look around")
+    await ctx.enter()
+    await emit(ctx.calls[0] as Call, { type: "text-start" }, { type: "text-delta", text: words })
+    const lines = (await ctx.frame()).split("\n").filter((line) => line.includes("word"))
+    expect(lines.length).toBeGreaterThan(5)
+    for (const line of lines) expect(line).not.toMatch(BRAILLE)
+  }))
+
+test("the logo leaves when there's no room for it", () =>
+  withApp(
+    async (ctx) => {
+      expect(await ctx.frame()).not.toMatch(BRAILLE)
+    },
+    30,
+    undefined,
+    10,
+  ))
+
 test("a room turn of the orchestrator stays out of its chat", () =>
   withApp(async (ctx) => {
     await ctx.press("TAB")

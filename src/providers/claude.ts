@@ -38,6 +38,9 @@ export const claude: Provider = {
       "stream-json",
       "--verbose",
       "--include-partial-messages",
+      // Without this, recent models send thinking events with no text in them.
+      "--thinking-display",
+      "summarized",
       "--permission-mode",
       mode === "edit" ? "acceptEdits" : "dontAsk",
       ...(model ? ["--model", model] : []),
@@ -68,6 +71,12 @@ export const claude: Provider = {
         if (inner?.type === "content_block_start" && inner.content_block?.type === "text") {
           return [{ type: "text-start" }]
         }
+        if (inner?.type === "content_block_start" && inner.content_block?.type === "thinking") {
+          return [{ type: "thinking-start" }]
+        }
+        if (inner?.type === "content_block_delta" && inner.delta?.type === "thinking_delta") {
+          return [{ type: "thinking-delta", text: String(inner.delta.thinking ?? "") }]
+        }
         if (inner?.type === "content_block_delta" && inner.delta?.type === "text_delta") {
           return [{ type: "text-delta", text: String(inner.delta.text ?? "") }]
         }
@@ -82,6 +91,13 @@ export const claude: Provider = {
             ? [{ type: "tool", name: String(block.name), detail: summarizeInput(block.input) }]
             : [],
         )
+      }
+
+      case "user": {
+        const content: unknown = event.message?.content
+        return Array.isArray(content) && content.some((block) => block?.type === "tool_result")
+          ? [{ type: "tool-end" }]
+          : []
       }
 
       case "result":

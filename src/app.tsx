@@ -11,6 +11,7 @@ import type { Provider } from "./providers/types.ts"
 import { AgentForm } from "./ui/agent-form.tsx"
 import { ChatPanel, RoomPanel } from "./ui/conversation.tsx"
 import { isSettingsKey, useKeys } from "./ui/keys.ts"
+import { Logo } from "./ui/logo.tsx"
 import { Prompt } from "./ui/prompt.tsx"
 import { SettingsScreen } from "./ui/settings-screen.tsx"
 import { TaskDetail } from "./ui/task-detail.tsx"
@@ -24,6 +25,10 @@ const ORCHESTRATOR_VIEW = "@orchestrator"
 const ROOM_VIEW = "@room"
 // The tabs, the space under them, the prompt, the space over it and the hints.
 const MAIN_FIXED_LINES = 5
+// The conversation's title and the space under it, on top of the fixed lines.
+const LOGO_TOP_LINES = 4
+// Those two, and the spinner.
+const LOGO_EXTRA_LINES = 3
 const SCROLL_PAGE_LINES = 10
 const MODE_WIDTH = 11
 
@@ -364,10 +369,13 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
   if (screen.kind === "task") {
     const task = board.tasks.find((candidate) => candidate.id === screen.id)
     if (task) {
+      const assignee = panes.find((pane) => pane.id === task.assignee)
+      const working = assignee?.status === "running" && assignee.entries.at(-1)?.taskId === task.id
       return (
         <TaskDetail
           task={task}
-          entries={(panes.find((pane) => pane.id === task.assignee)?.entries ?? []).filter((entry) => entry.taskId === task.id)}
+          entries={(assignee?.entries ?? []).filter((entry) => entry.taskId === task.id)}
+          activity={working ? assignee.activity : undefined}
           nameOf={nameOf}
           onComment={(text) => team.comment(task.id, text)}
           onClose={() => setScreen({ kind: "main" })}
@@ -399,10 +407,20 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
         ? "Enter continue · type what to do · Esc close goal · ^T tasks"
         : "Tab switch · ^P settings · ^T tasks · ^G team · ^E mode · Esc cancel · ^C quit"
 
+  // Each room turn starts with an entry of its own, so this can't be an older reply.
+  const liveRoomEntry = panes.find((candidate) => candidate.id === state.roomBusy)?.entries.findLast((entry) => entry.room)
+  const liveReply = liveRoomEntry?.kind === "assistant" ? liveRoomEntry.text : undefined
+
   const shownTabs = visibleTabs(tabs, tabIndex, Math.max(10, width - MODE_WIDTH - 2))
 
   return (
     <box flexDirection="column" flexGrow={1} paddingLeft={1} paddingRight={1}>
+      <Logo
+        width={width}
+        height={height}
+        fixedLines={MAIN_FIXED_LINES + LOGO_EXTRA_LINES + extraLines}
+        topLines={LOGO_TOP_LINES}
+      />
       <box flexDirection="row" justifyContent="space-between" marginBottom={1} flexShrink={0}>
         <text wrapMode="none">
           {shownTabs.map((tab, position) => {
@@ -424,7 +442,7 @@ export function App({ team, store, providers, listModels, listSkills, initialErr
       <box flexDirection="row" flexGrow={1} flexBasis={0}>
         {(wide || !panelFocused) &&
           (currentView === ROOM_VIEW ? (
-            <RoomPanel messages={state.room} busy={state.roomBusy} nameOf={nameOf} scrollRef={scroll} />
+            <RoomPanel messages={state.room} busy={state.roomBusy} liveReply={liveReply} nameOf={nameOf} scrollRef={scroll} />
           ) : (
             pane && <ChatPanel pane={pane} hideRoom={onOrchestrator} scrollRef={scroll} />
           ))}

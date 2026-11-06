@@ -8,10 +8,13 @@ export const TEXT = "#E6E6E6"
 export const WARNING = "#E0AF68"
 export const DANGER = "#FF7A7A"
 export const SUCCESS = "#9ECE6A"
+export const BACKGROUND = "#0F1115"
+export const LOGO_COLOR = "#2A2F36"
 
 export const ENTRY_COLORS: Record<EntryKind, string> = {
   user: ACCENT,
   assistant: TEXT,
+  thinking: MUTED,
   tool: MUTED,
   error: DANGER,
   info: MUTED,

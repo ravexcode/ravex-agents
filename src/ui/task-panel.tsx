@@ -1,5 +1,5 @@
 import type { Board, Task } from "../core/board.ts"
-import { ACCENT, fit, MUTED, TASK_STATUS_COLORS, TASK_STATUS_ICONS } from "./theme.ts"
+import { ACCENT, BACKGROUND, fit, MUTED, TASK_STATUS_COLORS, TASK_STATUS_ICONS } from "./theme.ts"
 
 const INNER_WIDTH = 36
 const GUTTER = 2
@@ -64,6 +64,7 @@ export function TaskPanel({ board, cursor, focused, height, nameOf, grow }: Task
       {...(grow ? { flexGrow: 1 } : { width: TASK_PANEL_WIDTH, paddingLeft: GUTTER })}
       flexShrink={0}
       flexDirection="column"
+      backgroundColor={BACKGROUND}
     >
       <box height={HEADING_LINES} flexShrink={0}>
         <text fg={focused ? ACCENT : MUTED}>Tasks</text>

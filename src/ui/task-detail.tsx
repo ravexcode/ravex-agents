@@ -5,6 +5,7 @@ import type { Task } from "../core/board.ts"
 import { Entries, HIDDEN_SCROLLBAR } from "./conversation.tsx"
 import { useKeys } from "./keys.ts"
 import { Prompt } from "./prompt.tsx"
+import { Spinner } from "./spinner.tsx"
 import { ACCENT, MUTED, TASK_STATUS_COLORS, TASK_STATUS_LABELS, TEXT } from "./theme.ts"
 
 const PAGE_LINES = 10
@@ -27,12 +28,14 @@ function authorLabel(author: string, nameOf: (id: string) => string): string {
 export interface TaskDetailProps {
   task: Task
   entries: Entry[]
+  /** What its agent is doing, while it's working on this task. */
+  activity?: string | undefined
   nameOf: (id: string) => string
   onComment: (text: string) => void
   onClose: () => void
 }
 
-export function TaskDetail({ task, entries, nameOf, onComment, onClose }: TaskDetailProps) {
+export function TaskDetail({ task, entries, activity, nameOf, onComment, onClose }: TaskDetailProps) {
   const input = useRef<InputRenderable>(null)
   const scroll = useRef<ScrollBoxRenderable>(null)
 
@@ -73,10 +76,11 @@ export function TaskDetail({ task, entries, nameOf, onComment, onClose }: TaskDe
         )}
         {entries.length > 0 && (
           <Section title="Agent conversation">
-            <Entries entries={entries} />
+            <Entries entries={entries} live={activity !== undefined} />
           </Section>
         )}
       </scrollbox>
+      {activity !== undefined && <Spinner label={activity} />}
       <Prompt
         inputRef={input}
         focused

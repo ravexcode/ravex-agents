@@ -3,7 +3,7 @@ import { runTurn, type RunTurn, type TurnStatus } from "../providers/runner.ts"
 import type { PermissionMode, Provider, ProviderEvent, ProviderId } from "../providers/types.ts"
 
 export type PaneStatus = "idle" | "running" | "done" | "failed" | "cancelled"
-export type EntryKind = "user" | "assistant" | "tool" | "error" | "info"
+export type EntryKind = "user" | "assistant" | "thinking" | "tool" | "error" | "info"
 
 export interface Entry {
   id: number
@@ -22,6 +22,8 @@ export interface Pane {
   model?: string
   available: boolean
   status: PaneStatus
+  /** What it's doing right now, while it's running. */
+  activity?: string | undefined
   entries: Entry[]
 }
 
@@ -50,7 +52,9 @@ interface Runtime {
   sessions: Map<string, string>
   pendingSessionId?: string
   textOpen: boolean
+  thinkingOpen: boolean
   lastTextEntryId?: number
+  lastThinkingEntryId?: number
   currentTaskId?: number
   currentRoom?: boolean
   controllers: Set<AbortController>
@@ -58,6 +62,8 @@ interface Runtime {
   /** Resolves once the last queued turn finishes, so that turns run one at a time. */
   tail: Promise<void>
 }
+
+const WORKING = "Working"
 
 /** A definition change that a resumed conversation wouldn't pick up. */
 function conversationKey(agent: Agent): string {
@@ -127,6 +133,7 @@ export class AgentPool {
         this.#runtimes.set(agent.id, {
           sessions: new Map(),
           textOpen: false,
+          thinkingOpen: false,
           controllers: new Set(),
           pendingTurns: 0,
           tail: Promise.resolve(),
@@ -146,6 +153,7 @@ export class AgentPool {
         ...(agent.model ? { model: agent.model } : {}),
         available: this.isAvailable(agent),
         status: pane?.status ?? "idle",
+        activity: pane?.activity,
         entries,
       }
     })
@@ -217,7 +225,9 @@ export class AgentPool {
   ): Promise<TurnOutcome> {
     runtime.pendingSessionId = undefined
     runtime.textOpen = false
+    runtime.thinkingOpen = false
     runtime.lastTextEntryId = undefined
+    runtime.lastThinkingEntryId = undefined
     runtime.currentTaskId = options.taskId
     runtime.currentRoom = options.room
     this.#setStatus(agent.id, "running")
@@ -269,10 +279,27 @@ export class AgentPool {
       case "session":
         runtime.pendingSessionId = event.sessionId
         break
+      case "thinking-start":
+        runtime.textOpen = false
+        runtime.thinkingOpen = false
+        this.#setActivity(id, "Thinking")
+        break
+      case "thinking-delta":
+        this.#setActivity(id, "Thinking")
+        if (runtime.thinkingOpen) {
+          this.#appendToEntry(id, runtime.lastThinkingEntryId, event.text)
+        } else if (event.text) {
+          runtime.thinkingOpen = true
+          runtime.lastThinkingEntryId = this.addEntry(id, "thinking", event.text, taskId, room)
+        }
+        break
       case "text-start":
         runtime.textOpen = false
+        runtime.thinkingOpen = false
         break
       case "text-delta":
+        runtime.thinkingOpen = false
+        this.#setActivity(id, "Responding")
         if (runtime.textOpen) {
           this.#appendToEntry(id, runtime.lastTextEntryId, event.text)
         } else if (event.text) {
@@ -282,10 +309,16 @@ export class AgentPool {
         break
       case "tool":
         runtime.textOpen = false
+        runtime.thinkingOpen = false
+        this.#setActivity(id, `Running ${event.name}`)
         this.addEntry(id, "tool", event.detail ? `${event.name}: ${event.detail}` : event.name, taskId, room)
+        break
+      case "tool-end":
+        this.#setActivity(id, WORKING)
         break
       case "error": {
         runtime.textOpen = false
+        runtime.thinkingOpen = false
         // Codex reports the same failure through both `error` and `turn.failed`.
         const last = this.#pane(id)?.entries.at(-1)
         if (last?.kind !== "error" || last.text !== event.message) {
@@ -301,7 +334,11 @@ export class AgentPool {
   }
 
   #setStatus(id: string, status: PaneStatus): void {
-    this.#updatePane(id, (pane) => ({ ...pane, status }))
+    this.#updatePane(id, (pane) => ({ ...pane, status, activity: status === "running" ? WORKING : undefined }))
+  }
+
+  #setActivity(id: string, activity: string): void {
+    if (this.#pane(id)?.activity !== activity) this.#updatePane(id, (pane) => ({ ...pane, activity }))
   }
 
   addEntry(id: string, kind: EntryKind, text: string, taskId?: number, room?: boolean): number {

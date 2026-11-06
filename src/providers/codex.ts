@@ -13,6 +13,10 @@ function parseItem(phase: string, item: Record<string, any> | undefined): Provid
   switch (item?.type) {
     case "agent_message":
       return [{ type: "text-start" }, { type: "text-delta", text: String(item.text ?? "") }]
+    case "reasoning":
+      return [{ type: "thinking-start" }, { type: "thinking-delta", text: String(item.text ?? "") }]
+    case "command_execution":
+      return [{ type: "tool-end" }]
     case "file_change": {
       const paths = Array.isArray(item.changes)
         ? item.changes.map((change: { path?: unknown }) => String(change?.path ?? "")).join(", ")

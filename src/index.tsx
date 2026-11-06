@@ -7,6 +7,7 @@ import { defaultStatePath, StateFile } from "./core/persistence.ts"
 import { Team } from "./core/team.ts"
 import { providers } from "./providers/index.ts"
 import { createModelCatalog } from "./providers/models.ts"
+import { BACKGROUND } from "./ui/theme.ts"
 
 const cwd = process.cwd()
 const store = new AgentStore(defaultAgentPaths(cwd), providers)
@@ -21,7 +22,7 @@ const team = new Team(providers, agents, orchestratorId, {
   resolveSkills: skills.resolve,
 })
 const listSkills = () => skills.list()
-const renderer = await createCliRenderer({ exitOnCtrlC: true })
+const renderer = await createCliRenderer({ exitOnCtrlC: true, backgroundColor: BACKGROUND })
 
 // Running agents would otherwise outlive the app and keep the process open.
 renderer.once(CliRenderEvents.DESTROY, () => team.stop())

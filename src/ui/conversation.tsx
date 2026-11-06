@@ -1,20 +1,44 @@
-import type { ScrollBoxRenderable } from "@opentui/core"
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import type { RefObject } from "react"
 import type { Entry, Pane } from "../core/agent-pool.ts"
 import type { RoomMessage } from "../core/room.ts"
-import { DANGER, ACCENT, ENTRY_COLORS, MUTED, PANE_STATUS_LABELS, TEXT } from "./theme.ts"
+import { Spinner } from "./spinner.tsx"
+import { ACCENT, BACKGROUND, DANGER, ENTRY_COLORS, MUTED, PANE_STATUS_LABELS, TEXT } from "./theme.ts"
 
 // PageUp and PageDown scroll instead, which leaves the screen free of chrome.
 export const HIDDEN_SCROLLBAR = { visible: false }
 
-export function Entries({ entries }: { entries: Entry[] }) {
+// The block an agent is still writing for the team, which it removes once it's parsed.
+const LIVE_BLOCK = /```ravex-[\s\S]*$/
+
+const ENTRY_PREFIXES: Partial<Record<Entry["kind"], string>> = { user: "> ", thinking: "✻ ", tool: "◆ " }
+
+export interface EntriesProps {
+  entries: Entry[]
+  /** The last entry may still be arriving. */
+  live?: boolean
+}
+
+export function Entries({ entries, live }: EntriesProps) {
+  const last = entries.at(-1)
   return (
     <>
-      {entries.map((entry) => (
-        <box key={entry.id} marginBottom={entry.kind === "tool" ? 0 : 1} flexShrink={0}>
-          <text fg={ENTRY_COLORS[entry.kind]}>{entry.kind === "user" ? `> ${entry.text}` : entry.text}</text>
-        </box>
-      ))}
+      {entries.map((entry) => {
+        const streaming = live && entry === last && entry.kind === "assistant"
+        const text = (streaming ? entry.text.replace(LIVE_BLOCK, "") : entry.text).trimEnd()
+        if (!text) return null
+        return (
+          // Solid, because the logo behind would otherwise show between the words.
+          <box key={entry.id} paddingBottom={entry.kind === "tool" ? 0 : 1} backgroundColor={BACKGROUND} flexShrink={0}>
+            <text
+              fg={ENTRY_COLORS[entry.kind]}
+              attributes={entry.kind === "thinking" ? TextAttributes.ITALIC : TextAttributes.NONE}
+            >
+              {`${ENTRY_PREFIXES[entry.kind] ?? ""}${text}`}
+            </text>
+          </box>
+        )
+      })}
     </>
   )
 }
@@ -43,8 +67,12 @@ export function ChatPanel({ pane, hideRoom, scrollRef }: ChatPanelProps) {
         stickyStart="bottom"
         verticalScrollbarOptions={HIDDEN_SCROLLBAR}
       >
-        <Entries entries={hideRoom ? pane.entries.filter((entry) => !entry.room) : pane.entries} />
+        <Entries
+          entries={hideRoom ? pane.entries.filter((entry) => !entry.room) : pane.entries}
+          live={pane.status === "running"}
+        />
       </scrollbox>
+      {pane.status === "running" && <Spinner label={pane.activity ?? "Working"} />}
     </box>
   )
 }
@@ -59,11 +87,13 @@ const ROOM_COLORS: Record<RoomMessage["kind"], string> = {
 export interface RoomPanelProps {
   messages: RoomMessage[]
   busy?: string
+  /** What the agent replying has written so far. */
+  liveReply?: string
   nameOf: (id: string) => string
   scrollRef: RefObject<ScrollBoxRenderable | null>
 }
 
-export function RoomPanel({ messages, busy, nameOf, scrollRef }: RoomPanelProps) {
+export function RoomPanel({ messages, busy, liveReply, nameOf, scrollRef }: RoomPanelProps) {
   return (
     <box flexGrow={1} flexBasis={0} flexDirection="column">
       <text fg={MUTED} flexShrink={0}>
@@ -78,7 +108,7 @@ export function RoomPanel({ messages, busy, nameOf, scrollRef }: RoomPanelProps)
         verticalScrollbarOptions={HIDDEN_SCROLLBAR}
       >
         {messages.map((message) => (
-          <box key={message.id} marginBottom={message.kind === "info" ? 0 : 1} flexShrink={0}>
+          <box key={message.id} paddingBottom={message.kind === "info" ? 0 : 1} backgroundColor={BACKGROUND} flexShrink={0}>
             <text fg={ROOM_COLORS[message.kind]}>
               {message.kind === "user"
                 ? `> ${message.text}`
@@ -90,8 +120,13 @@ export function RoomPanel({ messages, busy, nameOf, scrollRef }: RoomPanelProps)
             </text>
           </box>
         ))}
-        {busy && <text fg={MUTED}>{`${nameOf(busy)} is replying…`}</text>}
+        {busy && liveReply && (
+          <box backgroundColor={BACKGROUND} flexShrink={0}>
+            <text fg={TEXT}>{`${nameOf(busy)}: ${liveReply}`}</text>
+          </box>
+        )}
       </scrollbox>
+      {busy && <Spinner label={`${nameOf(busy)} is replying`} />}
     </box>
   )
 }

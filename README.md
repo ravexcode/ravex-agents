@@ -62,6 +62,16 @@ Board rules:
 
 `Ctrl+Shift+P` also opens the settings if your terminal passes it on. Many terminals and editors keep it for their own command palette, so use `Ctrl+P` or `F2` there.
 
+## Watching agents work
+
+While an agent runs, a spinner says what it's doing and for how long. Its reasoning, the tools it uses and its reply appear in its conversation as they arrive. What you see depends on what each CLI reports:
+
+| CLI | Thinking | Reply |
+|---|---|---|
+| Claude Code | Summaries, as they're written | Word by word |
+| Codex | Summaries, once each is finished | Once each message is finished |
+| OpenCode | Once finished, and only if the model shares it | Once each part is finished |
+
 ## Your team
 
 Press `Ctrl+G`, then `n`, or choose **New agent** in the settings, to create an agent. Each one has a name, a description that tells the orchestrator what to assign to it, a provider and model, skills, tools and instructions.
