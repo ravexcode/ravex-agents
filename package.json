@@ -8,7 +8,8 @@
     "start": "bun src/index.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build --compile --minify --define process.env.OPENTUI_LIBC='\"glibc\"' src/index.tsx --outfile dist/ravex-agents"
+    "build": "bun build --compile --minify --define process.env.OPENTUI_LIBC='\"glibc\"' src/index.tsx --outfile dist/ravex-agents",
+    "install:local": "bun run build && mkdir -p ~/.local/bin && install -m 755 dist/ravex-agents ~/.local/bin/ravexcode"
   },
   "dependencies": {
     "@opentui/core": "^0.8.2",

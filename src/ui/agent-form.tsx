@@ -8,7 +8,7 @@ import { modeForTools, type Agent, type AgentDefinition, type SavableOrigin } fr
 import type { ListModels } from "../providers/models.ts"
 import { TOOL_IDS, type ProviderId, type ToolId } from "../providers/types.ts"
 import { useKeys } from "./keys.ts"
-import { ACCENT, DANGER, fit, MUTED, TEXT, TOOL_LABELS } from "./theme.ts"
+import { ACCENT, DANGER, FIELD_BACKGROUND, FIELD_FOCUSED_BACKGROUND, fit, MUTED, TEXT, TOOL_LABELS } from "./theme.ts"
 
 const LABEL_WIDTH = 14
 const INSTRUCTIONS_HEIGHT = 5
@@ -428,8 +428,8 @@ export function AgentForm({ agent, providerIds, lockedTools, listModels, listSki
           // Without this, the text's width sets the field's width and overflows the form.
           flexBasis={0}
           height={INSTRUCTIONS_HEIGHT}
-          backgroundColor="#1F2229"
-          focusedBackgroundColor="#262A33"
+          backgroundColor={FIELD_BACKGROUND}
+          focusedBackgroundColor={FIELD_FOCUSED_BACKGROUND}
           initialValue={initial?.instructions ?? ""}
           placeholder="How this agent should work"
           focused={focus === "instructions"}

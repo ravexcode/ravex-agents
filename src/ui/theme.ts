@@ -2,14 +2,16 @@ import type { EntryKind, PaneStatus } from "../core/agent-pool.ts"
 import type { TaskStatus } from "../core/board.ts"
 import type { ToolId } from "../providers/types.ts"
 
-export const ACCENT = "#7DCFFF"
+export const ACCENT = "#4F8CFF"
 export const MUTED = "#8A8F98"
 export const TEXT = "#E6E6E6"
 export const WARNING = "#E0AF68"
 export const DANGER = "#FF7A7A"
 export const SUCCESS = "#9ECE6A"
-export const BACKGROUND = "#0F1115"
+export const BACKGROUND = "#000000"
 export const LOGO_COLOR = "#2A2F36"
+export const FIELD_BACKGROUND = "#101114"
+export const FIELD_FOCUSED_BACKGROUND = "#181A1F"
 
 export const ENTRY_COLORS: Record<EntryKind, string> = {
   user: ACCENT,

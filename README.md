@@ -17,14 +17,23 @@ bun install
 bun run dev
 ```
 
-For a standalone executable (Linux x64 with glibc):
+To install it as the `ravexcode` command (Linux x64 with glibc):
 
 ```sh
-bun run build
-./dist/ravex-agents
+bun run install:local
 ```
 
-It works on the folder you open it from.
+This compiles a standalone executable to `~/.local/bin/ravexcode`, which needs to be in your `PATH`. Run it again to pick up new changes.
+
+Then open any folder, as you would with an editor:
+
+```sh
+ravexcode .
+ravexcode ~/projects/api
+ravexcode
+```
+
+With no folder, it works on the one you're in. Each folder keeps its own conversations.
 
 ## How it works
 
@@ -181,6 +190,7 @@ The board, room and sessions are saved in `$XDG_STATE_HOME/ravex-agents/<project
 | `bun run dev` | Run with automatic reload |
 | `bun run start` | Run without reload |
 | `bun run build` | Compile `dist/ravex-agents` |
+| `bun run install:local` | Compile it and install it as `ravexcode` |
 | `bun run typecheck` | Check types |
 | `bun test` | Run the tests |
 
