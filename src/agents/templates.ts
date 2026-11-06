@@ -6,7 +6,7 @@ export interface AgentTemplate {
 }
 
 export const AGENT_TEMPLATES: AgentTemplate[] = [
-  { label: "Blank", name: "", description: "", instructions: "" },
+  { label: "En blanco", name: "", description: "", instructions: "" },
   {
     label: "Cybersecurity",
     name: "Security",

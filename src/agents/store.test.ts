@@ -22,7 +22,6 @@ const definition = (id: string, overrides: Partial<AgentDefinition> = {}): Agent
   provider: "claude",
   instructions: "",
   mode: "read-only",
-  subagents: [],
   ...overrides,
 })
 
@@ -44,15 +43,61 @@ const writeRaw = (path: string, content: string) => {
 const ids = () => store.load().agents.map((agent) => agent.id)
 const find = (id: string) => store.load().agents.find((agent) => agent.id === id)
 
-test("starts with one built-in agent per provider and no files", () => {
-  const { agents, errors } = store.load()
+test("starts with a default orchestrator and one built-in agent per provider", () => {
+  const { agents, errors, orchestratorId } = store.load()
   expect(agents.map((agent) => [agent.id, agent.origin])).toEqual([
+    ["lead", "builtin"],
     ["claude", "builtin"],
     ["codex", "builtin"],
     ["opencode", "builtin"],
   ])
+  expect(orchestratorId).toBe("lead")
   expect(errors).toEqual({})
   expect(existsSync(paths.global)).toBe(false)
+})
+
+test("editing a built-in agent overrides it, and deleting the copy restores it", () => {
+  store.save(definition("codex", { provider: "codex", model: "gpt-6-sol" }), "global")
+  expect(find("codex")).toMatchObject({ model: "gpt-6-sol", origin: "global" })
+  store.delete("codex", "global")
+  expect(find("codex")).toMatchObject({ origin: "builtin" })
+  expect(find("codex")?.model).toBeUndefined()
+})
+
+describe("orchestrator", () => {
+  test("keeps the choice", () => {
+    store.save(definition("boss"), "global")
+    store.setOrchestrator("boss")
+    expect(new AgentStore(paths, providers).load().orchestratorId).toBe("boss")
+  })
+
+  test("saving an agent doesn't lose the choice", () => {
+    store.save(definition("boss"), "global")
+    store.setOrchestrator("boss")
+    store.save(definition("other"), "global")
+    expect(store.load().orchestratorId).toBe("boss")
+  })
+
+  test("falls back to the default if the chosen agent no longer exists", () => {
+    store.save(definition("boss"), "global")
+    store.setOrchestrator("boss")
+    store.delete("boss", "global")
+    expect(store.load().orchestratorId).toBe("lead")
+  })
+
+  test("never overwrites an invalid file", () => {
+    writeRaw(paths.global, "{ oops")
+    expect(() => store.setOrchestrator("lead")).toThrow()
+    expect(readFileSync(paths.global, "utf8")).toBe("{ oops")
+  })
+})
+
+test("loads older files, and drops their subagents on the next save", () => {
+  writeRaw(paths.global, JSON.stringify({ agents: [{ ...definition("old"), subagents: ["x"] }] }))
+  expect(store.load().errors).toEqual({})
+  expect(find("old")).toBeDefined()
+  store.save(definition("new"), "global")
+  expect(readFileSync(paths.global, "utf8")).not.toContain("subagents")
 })
 
 test("saves and reloads an agent with all of its fields", () => {
@@ -62,7 +107,6 @@ test("saves and reloads an agent with all of its fields", () => {
     model: "m1",
     instructions: 'Say "hi"\nnow',
     mode: "edit",
-    subagents: ["design"],
   })
   store.save(agent, "global")
   expect(new AgentStore(paths, providers).load().agents.at(-1)).toEqual({ ...agent, origin: "global" })
@@ -96,7 +140,7 @@ test("deleting removes only that agent", () => {
   store.save(definition("a"), "global")
   store.save(definition("b"), "global")
   store.delete("a", "global")
-  expect(ids()).toEqual(["claude", "codex", "opencode", "b"])
+  expect(ids()).toEqual(["lead", "claude", "codex", "opencode", "b"])
 })
 
 test("leaves no temporary files behind", () => {
@@ -141,15 +185,6 @@ describe("invalid files", () => {
     writeRaw(paths.global, JSON.stringify({ agents: [{ id: "a" }] }))
     expect(store.load().errors.global).toContain("invalid agent")
   })
-})
-
-test("removes a cycle from hand-edited files when loading", () => {
-  writeRaw(
-    paths.global,
-    JSON.stringify({ agents: [definition("a", { subagents: ["b"] }), definition("b", { subagents: ["a"] })] }),
-  )
-  expect(find("a")?.subagents).toEqual(["b"])
-  expect(find("b")?.subagents).toEqual([])
 })
 
 describe("defaultAgentPaths", () => {

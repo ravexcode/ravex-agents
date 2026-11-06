@@ -2,24 +2,31 @@ import { CliRenderEvents, createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
 import { AgentStore, defaultAgentPaths } from "./agents/store.ts"
 import { App } from "./app.tsx"
-import { ALL_AGENTS, Orchestrator } from "./orchestrator.ts"
+import { defaultStatePath, StateFile } from "./core/persistence.ts"
+import { Team } from "./core/team.ts"
 import { providers } from "./providers/index.ts"
+import { createModelCatalog } from "./providers/models.ts"
 
-const store = new AgentStore(defaultAgentPaths(process.cwd()), providers)
-const { agents, errors } = store.load()
-const orchestrator = new Orchestrator(providers, agents)
+const cwd = process.cwd()
+const store = new AgentStore(defaultAgentPaths(cwd), providers)
+const { agents, orchestratorId, errors } = store.load()
+const stateFile = new StateFile(defaultStatePath(cwd))
+const { snapshot, error: stateError } = stateFile.load()
+const team = new Team(providers, agents, orchestratorId, { cwd, persistence: stateFile, snapshot })
 const renderer = await createCliRenderer({ exitOnCtrlC: true })
 
 // Running agents would otherwise outlive the app and keep the process open.
-renderer.once(CliRenderEvents.DESTROY, () => orchestrator.cancel(ALL_AGENTS))
+renderer.once(CliRenderEvents.DESTROY, () => team.stop())
 
 try {
   createRoot(renderer).render(
     <App
-      orchestrator={orchestrator}
+      team={team}
       store={store}
       providerIds={providers.map((provider) => provider.id)}
+      listModels={createModelCatalog(providers)}
       initialErrors={errors}
+      initialNotice={stateError}
     />,
   )
 } catch (error) {

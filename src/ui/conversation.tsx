@@ -1,37 +1,66 @@
-import type { Pane } from "../orchestrator.ts"
-import { ACCENT, DANGER, ENTRY_COLORS } from "./theme.ts"
+import type { Entry, Pane } from "../core/agent-pool.ts"
+import type { RoomMessage } from "../core/room.ts"
+import { ACCENT, DANGER, ENTRY_COLORS, MUTED, PANE_STATUS_LABELS, TEXT } from "./theme.ts"
 
-// Below this width, side-by-side columns are too narrow to read.
-const MIN_COLUMNS_WIDTH = 60
+export function Entries({ entries }: { entries: Entry[] }) {
+  return (
+    <>
+      {entries.map((entry) => (
+        <box key={entry.id} marginBottom={entry.kind === "tool" ? 0 : 1} flexShrink={0}>
+          <text fg={ENTRY_COLORS[entry.kind]}>{entry.kind === "user" ? `> ${entry.text}` : entry.text}</text>
+        </box>
+      ))}
+    </>
+  )
+}
 
-function AgentPane({ pane }: { pane: Pane }) {
-  const status = pane.available ? pane.status : "not installed"
+/** A conversation with the orchestrator or with one agent. */
+export function ChatPanel({ pane, hideRoom }: { pane: Pane; hideRoom?: boolean }) {
+  const status = pane.available ? PANE_STATUS_LABELS[pane.status] : "no instalado"
   const borderColor = !pane.available || pane.status === "failed" ? DANGER : ACCENT
   const engine = pane.model ? `${pane.provider}/${pane.model}` : pane.provider
-  const title = pane.label.toLowerCase() === pane.provider ? pane.label : `${pane.label} · ${engine}`
 
   return (
-    <box flexGrow={1} flexBasis={0} border borderColor={borderColor} title={` ${title} · ${status} `}>
+    <box flexGrow={1} flexBasis={0} border borderColor={borderColor} title={` ${pane.label} · ${engine} · ${status} `}>
       <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
-        {pane.entries.map((entry) => (
-          <box key={entry.id} marginBottom={entry.kind === "tool" ? 0 : 1}>
-            <text fg={ENTRY_COLORS[entry.kind]}>
-              {entry.kind === "user" ? `> ${entry.text}` : entry.text}
-            </text>
-          </box>
-        ))}
+        <Entries entries={hideRoom ? pane.entries.filter((entry) => !entry.room) : pane.entries} />
       </scrollbox>
     </box>
   )
 }
 
-/** Shows the selected agent, or a column per agent when sending to all of them. */
-export function Conversation({ panes, width }: { panes: Pane[]; width: number }) {
+const ROOM_COLORS: Record<RoomMessage["kind"], string> = {
+  user: ACCENT,
+  agent: TEXT,
+  info: MUTED,
+  error: DANGER,
+}
+
+export interface RoomPanelProps {
+  messages: RoomMessage[]
+  busy?: string
+  nameOf: (id: string) => string
+}
+
+export function RoomPanel({ messages, busy, nameOf }: RoomPanelProps) {
   return (
-    <box flexDirection={width < MIN_COLUMNS_WIDTH ? "column" : "row"} flexGrow={1}>
-      {panes.map((pane) => (
-        <AgentPane key={pane.id} pane={pane} />
-      ))}
+    <box flexGrow={1} flexBasis={0} border borderColor={ACCENT} title=" Sala ">
+      <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
+        {messages.map((message) => (
+          <box key={message.id} marginBottom={message.kind === "info" ? 0 : 1} flexShrink={0}>
+            <text fg={ROOM_COLORS[message.kind]}>
+              {message.kind === "user"
+                ? `> ${message.text}`
+                : message.kind === "agent"
+                  ? `${nameOf(message.author ?? "")}: ${message.text}`
+                  : message.kind === "info"
+                    ? `· ${message.text}`
+                    : message.text}
+            </text>
+          </box>
+        ))}
+        {busy && <text fg={MUTED}>{`${nameOf(busy)} está respondiendo…`}</text>}
+      </scrollbox>
     </box>
   )
 }

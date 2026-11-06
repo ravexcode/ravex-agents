@@ -1,10 +1,12 @@
-import type { EntryKind, PaneStatus } from "../orchestrator.ts"
+import type { EntryKind, PaneStatus } from "../core/agent-pool.ts"
+import type { TaskStatus } from "../core/board.ts"
 
 export const ACCENT = "#7DCFFF"
 export const MUTED = "#8A8F98"
 export const TEXT = "#E6E6E6"
 export const WARNING = "#E0AF68"
 export const DANGER = "#FF7A7A"
+export const SUCCESS = "#9ECE6A"
 
 export const ENTRY_COLORS: Record<EntryKind, string> = {
   user: ACCENT,
@@ -14,20 +16,50 @@ export const ENTRY_COLORS: Record<EntryKind, string> = {
   info: MUTED,
 }
 
-export const STATUS_COLORS: Record<PaneStatus, string> = {
-  idle: "#5A5F68",
+export const PANE_STATUS_LABELS: Record<PaneStatus, string> = {
+  idle: "en espera",
+  running: "trabajando",
+  done: "listo",
+  failed: "falló",
+  cancelled: "cancelado",
+}
+
+export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
+  proposed: ACCENT,
+  todo: TEXT,
   running: WARNING,
-  waiting: WARNING,
-  done: "#9ECE6A",
+  review: WARNING,
+  blocked: DANGER,
+  done: SUCCESS,
   failed: DANGER,
   cancelled: MUTED,
 }
 
-export const STATUS_ICONS: Record<PaneStatus, string> = {
-  idle: " ",
+export const TASK_STATUS_ICONS: Record<TaskStatus, string> = {
+  proposed: "○",
+  todo: " ",
   running: "●",
-  waiting: "◌",
+  review: "◎",
+  blocked: "!",
   done: "✓",
   failed: "✗",
   cancelled: "–",
+}
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  proposed: "propuesta",
+  todo: "pendiente",
+  running: "en marcha",
+  review: "en revisión",
+  blocked: "bloqueada",
+  done: "hecha",
+  failed: "falló",
+  cancelled: "cancelada",
+}
+
+/** Cuts a text to one line of this width, padding it if asked. */
+export function fit(text: string, width: number, pad = false): string {
+  const line = text.replace(/\s+/g, " ").trim()
+  const cut = line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line
+  return pad ? cut.padEnd(width) : cut
 }
